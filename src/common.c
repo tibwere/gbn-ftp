@@ -1,24 +1,16 @@
-#include <stdio.h>
 #include <getopt.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
+#include <errno.h>
 
+#include "gbn.h"
+#include "common.h"
+
+extern char *optarg;
 extern int opterr;
 
-enum usages {
-        STANDARD,
-        HELP,
-        VERSION,
-        ERROR
-};
-
-struct gbn_config {
-        unsigned int N;
-        unsigned long rto_msec;
-        float probability;
-};
-
-enum usages parse_cmd(int argc, char **argv, struct gbn_config *conf, int *port)
+enum app_usages parse_cmd(int argc, char **argv, struct gbn_config *conf, int *port)
 {
         int opt;
 
@@ -56,6 +48,10 @@ enum usages parse_cmd(int argc, char **argv, struct gbn_config *conf, int *port)
         return STANDARD;
 }
 
+const struct gbn_config default_config = {
+        16, 1000, false, 0.2
+};
+
 
 void default_gbn_configuration(struct gbn_config* cfg)
 {
@@ -65,28 +61,7 @@ void default_gbn_configuration(struct gbn_config* cfg)
         cfg->probability = 0.2; 
 }
 
-
-int main(int argc, char **argv)
+void error_handler(const char *message)
 {
-        struct gbn_config config;
-        int port;
-        enum usages modality;
-
-        default_gbn_configuration(&config);
-
-        modality = parse_cmd(argc, argv, &config, &port);
-
-        switch(modality) {
-                case STANDARD: 
-                        printf("Configs:\n\tN: %u\n\tt: %lu\n\tP: %f\n\tp: %u\n", 
-                                config.N, config.rto_msec, config.probability, port);
-                        break;
-                default:
-                        printf("Not yet implemented\n");
-                        
-        }
-        
-        
-        return 0;
+        fprintf(stderr, "%s.\nError %d: %s\n", message, errno, strerror(errno));
 }
-
