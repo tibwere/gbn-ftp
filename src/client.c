@@ -5,22 +5,28 @@
 #include <string.h>
 #include <getopt.h>
 #include <stdlib.h>
+#include <stdbool.h>
+#include <string.h>
 #include "gbn.h" 
 #include "common.h"
 
+#define ADDRESS_STRING_LENGTH 1024
+
 int sockfd;
-unsigned short int port;
-struct sockaddr_in addr;
+unsigned short int server_port;
+struct sockaddr_in server_addr;
 
 extern const struct gbn_config DEFAULT_GBN_CONFIG;
 extern char *optarg;
 extern int opterr;
 
-enum app_usages parse_cmd(int argc, char **argv, struct gbn_config *conf)
+enum app_usages parse_cmd(int argc, char **argv, struct gbn_config *conf, char *address)
 {
         int opt;
+        bool valid_cmd = false;
 
         struct option long_options[] = {
+                {"address",     required_argument,      0, 'a'},
                 {"port",        required_argument,      0, 'p'},
                 {"windowsize",  required_argument,      0, 'N'},
                 {"rto",         required_argument,      0, 't'},
@@ -30,10 +36,14 @@ enum app_usages parse_cmd(int argc, char **argv, struct gbn_config *conf)
                 {0,             0,                      0, 0}
         };
 
-        while ((opt = getopt_long(argc, argv, "p:N:t:P:hv", long_options, NULL)) != -1) {
+        while ((opt = getopt_long(argc, argv, "a:p:N:t:P:hv", long_options, NULL)) != -1) {
                 switch(opt) {
+                        case 'a':
+                                strncpy(address, optarg, ADDRESS_STRING_LENGTH);
+                                valid_cmd = true;
+                                break;
                         case 'p':
-                                port = strtol(optarg, NULL, 10);
+                                server_port = strtol(optarg, NULL, 10);
                                 break;
                         case 'N':
                                 conf->N = strtol(optarg, NULL, 10);
@@ -51,79 +61,71 @@ enum app_usages parse_cmd(int argc, char **argv, struct gbn_config *conf)
                 }
         }
 
-        return STANDARD;
+        return (valid_cmd) ? STANDARD : ERROR;
 }
 
-int setup_server()
+int connect_to_server(const char *address_string)
 {
         int fd;
-        int enable_option = 1;
-
-        memset(&addr, 0x0, sizeof(addr));
 
         if ((fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
                 error_handler("\"socket()\" failed."); 
                 return -1;
         }
 
-        if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &enable_option, sizeof(int))) {
-                error_handler("\"setsockopt(REUSEADDR)\" failed.");
+        memset(&server_addr, 0x0, sizeof(server_addr));
+	server_addr.sin_family = AF_INET;
+	server_addr.sin_port = htons(server_port);
+        if (inet_pton(AF_INET, address_string, &server_addr.sin_addr) <= 0) {
+                error_handler("\"inet_pton()\" failed."); 
+                return -1;
+        }        
+	
+	if (connect(fd, (struct sockaddr *) &server_addr, sizeof(struct sockaddr_in)) == -1) {
+                error_handler("\"connect()\" failed.");
                 return -1;
         }
-
-        addr.sin_family = AF_INET;
-	addr.sin_addr.s_addr = htonl(INADDR_ANY);
-	addr.sin_port = htons(port);
-        
-        if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-                error_handler("\"bind()\" failed.");
-                return -1;
-        }
-
-        return fd;
+	
+	return fd;
 }
 
 int main(int argc, char **argv)
 {
         struct gbn_config config;
         enum app_usages modality;
+        char address_string[ADDRESS_STRING_LENGTH];
         char buff[CHUNK_SIZE];
-        struct sockaddr_in client_addr;
-        socklen_t len;
 
-        len = sizeof(client_addr);
+        memset(address_string, 0x0, ADDRESS_STRING_LENGTH);
 
         memcpy(&config, &DEFAULT_GBN_CONFIG, sizeof(config));
-        port = DEFAULT_PORT;
+        server_port = DEFAULT_PORT;
 
-        modality = parse_cmd(argc, argv, &config);
+        modality = parse_cmd(argc, argv, &config, address_string);
 
         switch(modality) {
                 case STANDARD: 
-                        printf("Configs:\n\tN: %u\n\trcvtimeout: %lu\n\tprobability: %.1f\n\tport: %u\n\tadapitve: %s\n\n", 
-                                config.N, config.rto_msec, config.probability, port, (config.is_adaptive) ? "true" : "false");
+                        printf("Configs:\n\tN: %u\n\trcvtimeout: %lu\n\tprobability: %.1f\n\taddress: %s\n\tport: %u\n\tadapitve: %s\n\n", 
+                                config.N, config.rto_msec, config.probability, address_string, server_port, (config.is_adaptive) ? "true" : "false");
                         break;
                 default:
                         printf("Not yet implemented\n");             
         }   
 
-        sockfd = setup_server();
+        sockfd = connect_to_server(address_string);
+                
         printf("Socket created: %d\n", sockfd);
 
         while(true) {
+                memset(buff, 0x0, CHUNK_SIZE);
 
-                memset(&client_addr, 0x0, sizeof(client_addr));
-                memset(buff, 0x0, 1024);
-
-                if ((recvfrom(sockfd, buff, 1024, 0, (struct sockaddr *)&client_addr, &len)) < 0) {
-                        error_handler("\"recvfrom()\" failed.");
-                        break;
-                }
-
-                printf("Received: %s\n", buff);
+                /*TODO: aggiungere funzione di lettura migliore (da BD)*/
+                scanf("%s", buff);
+                send(sockfd, buff, 1024, 0);
+                printf("message sent\n");
         }
 
-        close(sockfd);        
+        close(sockfd);  
         return 0;
 }
 
