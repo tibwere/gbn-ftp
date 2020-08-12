@@ -7,7 +7,8 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
-#include "gbn.h" 
+
+#include "gbnftp.h" 
 #include "common.h"
 
 #define ADDRESS_STRING_LENGTH 1024
@@ -37,7 +38,7 @@ enum app_usages parse_cmd(int argc, char **argv, struct gbn_config *conf, char *
         };
 
         while ((opt = getopt_long(argc, argv, "a:p:N:t:P:hv", long_options, NULL)) != -1) {
-                switch(opt) {
+                switch (opt) {
                         case 'a':
                                 strncpy(address, optarg, ADDRESS_STRING_LENGTH);
                                 valid_cmd = true;
@@ -46,7 +47,8 @@ enum app_usages parse_cmd(int argc, char **argv, struct gbn_config *conf, char *
                                 server_port = strtol(optarg, NULL, 10);
                                 break;
                         case 'N':
-                                conf->N = strtol(optarg, NULL, 10);
+                                if (strtol(optarg, NULL, 10) < MAX_SEQ_NUMBER / 2)
+                                        conf->N = strtol(optarg, NULL, 10);
                                 break;
                         case 't':
                                 conf->rto_msec = strtol(optarg, NULL, 10);
@@ -103,7 +105,7 @@ int main(int argc, char **argv)
 
         modality = parse_cmd(argc, argv, &config, address_string);
 
-        switch(modality) {
+        switch (modality) {
                 case STANDARD: 
                         printf("Configs:\n\tN: %u\n\trcvtimeout: %lu\n\tprobability: %.1f\n\taddress: %s\n\tport: %u\n\tadapitve: %s\n\n", 
                                 config.N, config.rto_msec, config.probability, address_string, server_port, (config.is_adaptive) ? "true" : "false");
@@ -116,12 +118,11 @@ int main(int argc, char **argv)
                 
         printf("Socket created: %d\n", sockfd);
 
-        while(true) {
+        while (true) {
                 memset(buff, 0x0, CHUNK_SIZE);
 
-                /*TODO: aggiungere funzione di lettura migliore (da BD)*/
-                scanf("%s", buff);
-                send(sockfd, buff, 1024, 0);
+                get_input(CHUNK_SIZE, buff, true);
+                send(sockfd, buff, CHUNK_SIZE, 0);
                 printf("message sent\n");
         }
 

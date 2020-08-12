@@ -5,8 +5,11 @@
 #include <string.h>
 #include <getopt.h>
 #include <stdlib.h>
-#include "gbn.h" 
+
+#include "gbnftp.h" 
 #include "common.h"
+
+#define FOLDER_PATH "/home/tibwere/.gbn-ftp-public/"
 
 int sockfd;
 unsigned short int port;
@@ -16,7 +19,13 @@ extern const struct gbn_config DEFAULT_GBN_CONFIG;
 extern char *optarg;
 extern int opterr;
 
-enum app_usages parse_cmd(int argc, char **argv, struct gbn_config *conf)
+void exit_server(int status) 
+{
+        /* TODO: implementare chiusura pulita */
+        exit(status);
+}
+
+enum app_usages parse_cmd(int argc, char **argv, struct gbn_config *conf, long *tpsize_ptr)
 {
         int opt;
 
@@ -27,16 +36,18 @@ enum app_usages parse_cmd(int argc, char **argv, struct gbn_config *conf)
                 {"probability", required_argument,      0, 'P'},
                 {"help",        no_argument,            0, 'h'},
                 {"version",     no_argument,            0, 'v'},
+                {"tpsize",      required_argument,      0, 's'},
                 {0,             0,                      0, 0}
         };
 
-        while ((opt = getopt_long(argc, argv, "p:N:t:P:hv", long_options, NULL)) != -1) {
-                switch(opt) {
+        while ((opt = getopt_long(argc, argv, "p:N:t:P:s:hv", long_options, NULL)) != -1) {
+                switch (opt) {
                         case 'p':
                                 port = strtol(optarg, NULL, 10);
                                 break;
                         case 'N':
-                                conf->N = strtol(optarg, NULL, 10);
+                                if (strtol(optarg, NULL, 10) < MAX_SEQ_NUMBER / 2)
+                                        conf->N = strtol(optarg, NULL, 10);
                                 break;
                         case 't':
                                 conf->rto_msec = strtol(optarg, NULL, 10);
@@ -46,6 +57,9 @@ enum app_usages parse_cmd(int argc, char **argv, struct gbn_config *conf)
                                 break;
                         case 'h':
                                 return (argc != 2) ? ERROR : HELP;
+                        case 's':
+                                *tpsize_ptr = strtol(optarg, NULL, 10);
+                                break;
                         case 'v':
                                 return (argc != 2) ? ERROR : VERSION;
                 }
@@ -91,12 +105,14 @@ int main(int argc, char **argv)
         struct sockaddr_in client_addr;
         socklen_t len;
 
+        long POOL_SIZE = sysconf(_SC_NPROCESSORS_ONLN) << 2;
+        printf("%ld\n", POOL_SIZE);
         len = sizeof(client_addr);
 
         memcpy(&config, &DEFAULT_GBN_CONFIG, sizeof(config));
         port = DEFAULT_PORT;
 
-        modality = parse_cmd(argc, argv, &config);
+        modality = parse_cmd(argc, argv, &config, &POOL_SIZE);
 
         switch(modality) {
                 case STANDARD: 
@@ -104,7 +120,8 @@ int main(int argc, char **argv)
                                 config.N, config.rto_msec, config.probability, port, (config.is_adaptive) ? "true" : "false");
                         break;
                 default:
-                        printf("Not yet implemented\n");             
+                        printf("Not yet implemented\n");
+                        exit_server(EXIT_FAILURE);             
         }   
 
         sockfd = setup_server();
@@ -113,9 +130,9 @@ int main(int argc, char **argv)
         while(true) {
 
                 memset(&client_addr, 0x0, sizeof(client_addr));
-                memset(buff, 0x0, 1024);
+                memset(buff, 0x0, CHUNK_SIZE);
 
-                if ((recvfrom(sockfd, buff, 1024, 0, (struct sockaddr *)&client_addr, &len)) < 0) {
+                if ((recvfrom(sockfd, buff, 1024, MSG_PEEK, (struct sockaddr *)&client_addr, &len)) < 0) {
                         error_handler("\"recvfrom()\" failed.");
                         break;
                 }
@@ -124,6 +141,6 @@ int main(int argc, char **argv)
         }
 
         close(sockfd);        
-        return 0;
+        exit_server(EXIT_SUCCESS);
 }
 
