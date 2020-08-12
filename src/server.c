@@ -97,6 +97,31 @@ int setup_server()
         return fd;
 }
 
+// void test()
+// {
+//         gbn_ftp_header_t header;
+//         char payload[50] = "Ciao a tutti";
+//         char *message;
+
+//         gbn_ftp_header_t header_obtained;
+//         char payload_obtained[50];
+
+//         memset(&header_obtained, 0x0, sizeof(gbn_ftp_header_t));
+//         memset(payload_obtained, 0x0, 50);
+        
+//         set_sequence_number(&header, 4);
+//         set_message_type(&header, PUT);
+//         set_last(&header, false);
+        
+//         message = make_message(header, payload, strlen(payload));
+        
+//         get_message(message, &header_obtained, payload_obtained, sizeof(gbn_ftp_header_t) + strlen(payload));
+
+//         printf("HEADER:\n\tsequence_number: %u\n\ttype: %u\n\tis_last: %s\nPAYLOAD:\n\t\"%s\"\n\n\n\n", 
+//                 get_sequence_number(header_obtained), get_message_type(header_obtained), (is_last(header_obtained)) ? "true" : "false", payload_obtained);
+// }
+
+
 int main(int argc, char **argv)
 {
         struct gbn_config config;
@@ -106,7 +131,6 @@ int main(int argc, char **argv)
         socklen_t len;
 
         long POOL_SIZE = sysconf(_SC_NPROCESSORS_ONLN) << 2;
-        printf("%ld\n", POOL_SIZE);
         len = sizeof(client_addr);
 
         memcpy(&config, &DEFAULT_GBN_CONFIG, sizeof(config));

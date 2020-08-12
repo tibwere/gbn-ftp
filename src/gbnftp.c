@@ -1,3 +1,8 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <arpa/inet.h>
+
 #include "gbnftp.h"
 
 void set_sequence_number(gbn_ftp_header_t *header, unsigned int seq_no) 
@@ -10,7 +15,7 @@ unsigned int get_sequence_number(gbn_ftp_header_t header)
         return header >> 3;
 }
 
-void set_packet_type(gbn_ftp_header_t *header, enum packet_type type)
+void set_message_type(gbn_ftp_header_t *header, enum message_type type)
 {
         switch(type) {
                 case LIST: *header |= LISTMASK; break;
@@ -21,7 +26,7 @@ void set_packet_type(gbn_ftp_header_t *header, enum packet_type type)
         }
 }
 
-enum packet_type get_packet_type(gbn_ftp_header_t header)
+enum message_type get_message_type(gbn_ftp_header_t header)
 {
         unsigned int flags = header & ACKMASK;
 
@@ -46,4 +51,34 @@ void set_last(gbn_ftp_header_t *header, bool is_last)
 bool is_last(gbn_ftp_header_t header)
 {
         return ((header & LASTMASK) == LASTMASK) ? true : false;
+}
+
+char * make_message(gbn_ftp_header_t header, char *payload, size_t payload_size)
+{
+        char *message;
+        long unsigned header_size = sizeof(gbn_ftp_header_t);
+
+        if ((message = malloc(header_size + payload_size)) == NULL)
+                return NULL;
+
+
+        snprintf(message, header_size, "%u", header);
+        memcpy((message + header_size), payload, payload_size);
+
+        return message;
+
+}
+
+void get_message(char *message, gbn_ftp_header_t *header, char *payload, size_t message_size)
+{
+        long unsigned header_size = sizeof(gbn_ftp_header_t);
+
+        char header_raw[header_size + 1];
+        
+        memcpy(header_raw, message, header_size);
+        header_raw[header_size] = '\n';
+
+        *header = strtol(header_raw, NULL, 10);
+
+        memcpy(payload, (message + header_size), message_size - header_size);
 }
