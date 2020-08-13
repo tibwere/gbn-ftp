@@ -14,6 +14,7 @@
 int sockfd;
 unsigned short int port;
 struct sockaddr_in addr;
+struct gbn_config config;
 
 extern const struct gbn_config DEFAULT_GBN_CONFIG;
 extern char *optarg;
@@ -33,6 +34,7 @@ enum app_usages parse_cmd(int argc, char **argv, struct gbn_config *conf, long *
                 {"port",        required_argument,      0, 'p'},
                 {"windowsize",  required_argument,      0, 'N'},
                 {"rto",         required_argument,      0, 't'},
+                {"adaptive",    no_argument,            0, 'A'},
                 {"probability", required_argument,      0, 'P'},
                 {"help",        no_argument,            0, 'h'},
                 {"version",     no_argument,            0, 'v'},
@@ -52,6 +54,9 @@ enum app_usages parse_cmd(int argc, char **argv, struct gbn_config *conf, long *
                         case 't':
                                 conf->rto_msec = strtol(optarg, NULL, 10);
                                 break;
+                        case 'A':
+                                conf->is_adaptive = true;
+                                break;
                         case 'P':
                                 conf->probability = strtol(optarg, NULL, 10) / 100;
                                 break;
@@ -62,6 +67,9 @@ enum app_usages parse_cmd(int argc, char **argv, struct gbn_config *conf, long *
                                 break;
                         case 'v':
                                 return (argc != 2) ? ERROR : VERSION;
+                        default:
+                                fprintf(stderr, "Invalid condition at %s:%d\n", __FILE__, __LINE__);
+                                abort();
                 }
         }
 
@@ -97,41 +105,37 @@ int setup_server()
         return fd;
 }
 
-// void test()
-// {
-//         gbn_ftp_header_t header;
-//         char payload[50] = "Ciao a tutti";
-//         char *message;
-
-//         gbn_ftp_header_t header_obtained;
-//         char payload_obtained[50];
-
-//         memset(&header_obtained, 0x0, sizeof(gbn_ftp_header_t));
-//         memset(payload_obtained, 0x0, 50);
+void main_loop()
+{
+        struct sockaddr_in client_addr;
+        socklen_t len = sizeof(client_addr);
         
-//         set_sequence_number(&header, 4);
-//         set_message_type(&header, PUT);
-//         set_last(&header, false);
-        
-//         message = make_message(header, payload, strlen(payload));
-        
-//         get_message(message, &header_obtained, payload_obtained, sizeof(gbn_ftp_header_t) + strlen(payload));
+        // variabili da rimuovere non appena si implementa la reale logica
+        char buff[CHUNK_SIZE + sizeof(gbn_ftp_header_t)];
+        gbn_ftp_header_t header;
+        char payload[CHUNK_SIZE];
+        ssize_t size;
 
-//         printf("HEADER:\n\tsequence_number: %u\n\ttype: %u\n\tis_last: %s\nPAYLOAD:\n\t\"%s\"\n\n\n\n", 
-//                 get_sequence_number(header_obtained), get_message_type(header_obtained), (is_last(header_obtained)) ? "true" : "false", payload_obtained);
-// }
+        while(true) {
 
+                memset(&client_addr, 0x0, sizeof(client_addr));
+                memset(buff, 0x0, CHUNK_SIZE);
+                size = recvfrom(sockfd, buff, 1024, 0, (struct sockaddr *)&client_addr, &len);
+
+                if (size < 0) {
+                        error_handler("\"recvfrom()\" failed.");
+                        break;
+                }
+
+                get_segment(buff, &header, payload, size);
+                printf("Type received: %d\n", get_message_type(header));
+        }
+}
 
 int main(int argc, char **argv)
 {
-        struct gbn_config config;
         enum app_usages modality;
-        char buff[CHUNK_SIZE];
-        struct sockaddr_in client_addr;
-        socklen_t len;
-
         long POOL_SIZE = sysconf(_SC_NPROCESSORS_ONLN) << 2;
-        len = sizeof(client_addr);
 
         memcpy(&config, &DEFAULT_GBN_CONFIG, sizeof(config));
         port = DEFAULT_PORT;
@@ -143,26 +147,24 @@ int main(int argc, char **argv)
                         printf("Configs:\n\tN: %u\n\trcvtimeout: %lu\n\tprobability: %.1f\n\tport: %u\n\tadapitve: %s\n\n", 
                                 config.N, config.rto_msec, config.probability, port, (config.is_adaptive) ? "true" : "false");
                         break;
+                case HELP:
+                case VERSION: 
+                        printf("Not yet implemented\n");    
+                        exit_server(EXIT_FAILURE);
+                        break;
+                case ERROR:
+                        printf("Unable to parse command line.\n");
+                        exit_server(EXIT_FAILURE);
+                        break;                    
                 default:
-                        printf("Not yet implemented\n");
-                        exit_server(EXIT_FAILURE);             
+                        fprintf(stderr, "Invalid condition at %s:%d\n", __FILE__, __LINE__);
+                        abort();        
         }   
 
         sockfd = setup_server();
         printf("Socket created: %d\n", sockfd);
 
-        while(true) {
-
-                memset(&client_addr, 0x0, sizeof(client_addr));
-                memset(buff, 0x0, CHUNK_SIZE);
-
-                if ((recvfrom(sockfd, buff, 1024, MSG_PEEK, (struct sockaddr *)&client_addr, &len)) < 0) {
-                        error_handler("\"recvfrom()\" failed.");
-                        break;
-                }
-
-                printf("Received: %s\n", buff);
-        }
+        main_loop();
 
         close(sockfd);        
         exit_server(EXIT_SUCCESS);

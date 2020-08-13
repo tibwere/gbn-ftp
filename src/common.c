@@ -6,10 +6,6 @@
 #include "gbnftp.h"
 #include "common.h"
 
-const struct gbn_config DEFAULT_GBN_CONFIG = {
-        16, 1000, false, 0.2
-};
-
 void error_handler(const char *message)
 {
         if (errno != 0)
@@ -66,10 +62,10 @@ char multi_choice(const char *question, const char *choices, int no_choices)
 
         char c;
         get_input(1, &c, true);
-        c = tolower(c);
+        c = toupper(c);
 
         for (i = 0; i < no_choices; ++i) {
-            if (c == tolower(choices[i]))
+            if (c == toupper(choices[i]))
                 return c;
         }
 
