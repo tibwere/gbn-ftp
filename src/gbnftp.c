@@ -116,7 +116,7 @@ ssize_t gbn_send_ctrl_message(int socket, enum message_type type, const struct s
                 set_sequence_number(&header, params->next_seq_num++);
                 set_message_type(&header, type);
                 set_last(&header, true);
-                sendto(socket, make_segment(header, NULL, 0), header_size, 0, dest_addr, addr_size);
+                sendto(socket, make_segment(header, NULL, 0), header_size, MSG_NOSIGNAL, dest_addr, addr_size);
         }
 
         return 0;
