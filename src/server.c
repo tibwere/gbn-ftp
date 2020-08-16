@@ -248,15 +248,14 @@ int main(int argc, char **argv)
                                 config.N, config.rto_msec, config.probability, acceptance_port, (config.is_adaptive) ? "true" : "false");
                         break;
                 case HELP:
-
                         printf("\n\tusage: gbn-ftp-server [options]\n");
                         printf("\n\tList of available options:\n");
-                        printf("\t\t-p [--port] <port>\t\tserver port\n");
-                        printf("\t\t-N [--wndsize] <size>\t\tWindow size (for GBN)\n");
-                        printf("\t\t-t [--rto] <timeout>\t\tRetransmition timeout (for GBN)\n");
+                        printf("\t\t-p [--port]\t<port>\t\tserver port\n");
+                        printf("\t\t-N [--wndsize]\t<size>\t\tWindow size (for GBN)\n");
+                        printf("\t\t-t [--rto]\t<timeout>\tRetransmition timeout (for GBN)\n");
                         printf("\t\t-A [--adaptive]\t\t\tTimer adaptative\n");
-                        printf("\t\t-P [--prob] <percentage>\tSend probability (from 0 to 1)\n");
-                        printf("\t\t-s [--tpsize] <size>\t\tMax number of concurrenty connections\n");
+                        printf("\t\t-P [--prob]\t<percentage>\tSend probability (from 0 to 1)\n");
+                        printf("\t\t-s [--tpsize]\t<size>\t\tMax number of concurrenty connections\n");
                         printf("\t\t-h [--version]\t\t\tVersion of gbn-ftp-server\n");
                         exit_server(EXIT_SUCCESS);
                         break;

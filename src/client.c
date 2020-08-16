@@ -202,12 +202,12 @@ int main(int argc, char **argv)
                 case HELP:
                         printf("\n\tusage: gbn-ftp-client [options]\n");
                         printf("\n\tList of available options:\n");
-                        printf("\t\t-a [--address] <address>\tserver address (IPv4) {REQUIRED}\n");
-                        printf("\t\t-p [--port] <port>\t\tserver port\n");
-                        printf("\t\t-N [--wndsize] <size>\t\tWindow size (for GBN)\n");
-                        printf("\t\t-t [--rto] <timeout>\t\tRetransmition timeout (for GBN)\n");
+                        printf("\t\t-a [--address]\t<address>\tserver address (IPv4) {REQUIRED}\n");
+                        printf("\t\t-p [--port]\t<port>\t\tserver port\n");
+                        printf("\t\t-N [--wndsize]\t<size>\t\tWindow size (for GBN)\n");
+                        printf("\t\t-t [--rto]\t<timeout>\tRetransmition timeout (for GBN)\n");
                         printf("\t\t-A [--adaptive]\t\t\tTimer adaptative\n");
-                        printf("\t\t-P [--prob] <percentage>\tSend probability (from 0 to 1)\n");
+                        printf("\t\t-P [--prob]\t<percentage>\tSend probability (from 0 to 1)\n");
                         printf("\t\t-h [--version]\t\t\tVersion of gbn-ftp-client\n");
                         exit_client(EXIT_SUCCESS);
                         break;
