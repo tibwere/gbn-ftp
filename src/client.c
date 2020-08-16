@@ -11,12 +11,22 @@
 #include "gbnftp.h" 
 #include "common.h"
 
+
 #define ADDRESS_STRING_LENGTH 1024
 #define CLS system("clear")
+
 
 extern const struct gbn_config DEFAULT_GBN_CONFIG;
 extern char *optarg;
 extern int opterr;
+
+
+void exit_client(int status);
+enum app_usages parse_cmd(int argc, char **argv, char *address, struct gbn_config *config, unsigned short int *port);
+bool set_sockadrr_in(struct sockaddr_in *server_sockaddr, const char *address_string, unsigned short int port);
+int connect_to_server(const char *address_string, unsigned short int port);
+void print_info_about_conn(const char* address_string, unsigned short int port, struct gbn_config *configs);
+void main_menu(void);
 
 void exit_client(int status) 
 {
@@ -32,10 +42,10 @@ enum app_usages parse_cmd(int argc, char **argv, char *address, struct gbn_confi
         struct option long_options[] = {
                 {"address",     required_argument,      0, 'a'},
                 {"port",        required_argument,      0, 'p'},
-                {"windowsize",  required_argument,      0, 'N'},
+                {"wndsize",     required_argument,      0, 'N'},
                 {"rto",         required_argument,      0, 't'},
                 {"adaptive",    no_argument,            0, 'A'},
-                {"probability", required_argument,      0, 'P'},
+                {"prob",        required_argument,      0, 'P'},
                 {"help",        no_argument,            0, 'h'},
                 {"version",     no_argument,            0, 'v'},
                 {0,             0,                      0, 0}
@@ -141,7 +151,7 @@ void print_info_about_conn(const char* address_string, unsigned short int port, 
         }        
 }
 
-void main_menu()
+void main_menu(void)
 {
         char choice;
 
@@ -190,9 +200,20 @@ int main(int argc, char **argv)
                         print_info_about_conn(address_string, server_port, &config);
                         break;
                 case HELP:
+                        printf("\n\tusage: gbn-ftp-client [options]\n");
+                        printf("\n\tList of available options:\n");
+                        printf("\t\t-a [--address] <address>\tserver address (IPv4) {REQUIRED}\n");
+                        printf("\t\t-p [--port] <port>\t\tserver port\n");
+                        printf("\t\t-N [--wndsize] <size>\t\tWindow size (for GBN)\n");
+                        printf("\t\t-t [--rto] <timeout>\t\tRetransmition timeout (for GBN)\n");
+                        printf("\t\t-A [--adaptive]\t\t\tTimer adaptative\n");
+                        printf("\t\t-P [--prob] <percentage>\tSend probability (from 0 to 1)\n");
+                        printf("\t\t-h [--version]\t\t\tVersion of gbn-ftp-client\n");
+                        exit_client(EXIT_SUCCESS);
+                        break;
                 case VERSION: 
-                        printf("Not yet implemented\n");    
-                        exit_client(EXIT_FAILURE);
+                        printf("\n\tgbn-ftp-client version 1.0 (developed by tibwere)\n\n");    
+                        exit_client(EXIT_SUCCESS);
                         break;
                 case ERROR:
                         printf("Unable to parse command line.\n");

@@ -15,6 +15,7 @@
 #define START_WORKER_PORT 29290
 #define PORT_NOT_AVAILABLE 29289
 
+
 struct worker_port {
         unsigned short int port;
         bool is_avalaible;
@@ -68,8 +69,6 @@ void * worker(void *args)
 
         printf("Successfully connected (fd = %d)\n", sockfd);
 
-        pause();
-
         return NULL;
 }
 
@@ -79,13 +78,13 @@ enum app_usages parse_cmd(int argc, char **argv, struct gbn_config *conf, long *
 
         struct option long_options[] = {
                 {"port",        required_argument,      0, 'p'},
-                {"windowsize",  required_argument,      0, 'N'},
+                {"wndsize",     required_argument,      0, 'N'},
                 {"rto",         required_argument,      0, 't'},
                 {"adaptive",    no_argument,            0, 'A'},
-                {"probability", required_argument,      0, 'P'},
+                {"prob",        required_argument,      0, 'P'},
+                {"tpsize",      required_argument,      0, 's'},
                 {"help",        no_argument,            0, 'h'},
                 {"version",     no_argument,            0, 'v'},
-                {"tpsize",      required_argument,      0, 's'},
                 {0,             0,                      0, 0}
         };
 
@@ -249,9 +248,21 @@ int main(int argc, char **argv)
                                 config.N, config.rto_msec, config.probability, acceptance_port, (config.is_adaptive) ? "true" : "false");
                         break;
                 case HELP:
+
+                        printf("\n\tusage: gbn-ftp-server [options]\n");
+                        printf("\n\tList of available options:\n");
+                        printf("\t\t-p [--port] <port>\t\tserver port\n");
+                        printf("\t\t-N [--wndsize] <size>\t\tWindow size (for GBN)\n");
+                        printf("\t\t-t [--rto] <timeout>\t\tRetransmition timeout (for GBN)\n");
+                        printf("\t\t-A [--adaptive]\t\t\tTimer adaptative\n");
+                        printf("\t\t-P [--prob] <percentage>\tSend probability (from 0 to 1)\n");
+                        printf("\t\t-s [--tpsize] <size>\t\tMax number of concurrenty connections\n");
+                        printf("\t\t-h [--version]\t\t\tVersion of gbn-ftp-server\n");
+                        exit_server(EXIT_SUCCESS);
+                        break;
                 case VERSION: 
-                        printf("Not yet implemented\n");    
-                        exit_server(EXIT_FAILURE);
+                        printf("\n\tgbn-ftp-server version 1.0 (developed by tibwere)\n\n");    
+                        exit_server(EXIT_SUCCESS);
                         break;
                 case ERROR:
                         printf("Unable to parse command line.\n");
