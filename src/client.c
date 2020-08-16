@@ -14,12 +14,6 @@
 #define ADDRESS_STRING_LENGTH 1024
 #define CLS system("clear")
 
-int sockfd;
-unsigned short int server_port;
-struct sockaddr_in server_addr;
-struct gbn_config config;
-struct gbn_send_params params;
-
 extern const struct gbn_config DEFAULT_GBN_CONFIG;
 extern char *optarg;
 extern int opterr;
@@ -30,7 +24,7 @@ void exit_client(int status)
         exit(status);
 }
 
-enum app_usages parse_cmd(int argc, char **argv, char *address)
+enum app_usages parse_cmd(int argc, char **argv, char *address, struct gbn_config *config, unsigned short int *port)
 {
         int opt;
         bool valid_cmd = false;
@@ -54,20 +48,20 @@ enum app_usages parse_cmd(int argc, char **argv, char *address)
                                 valid_cmd = true;
                                 break;
                         case 'p':
-                                server_port = strtol(optarg, NULL, 10);
+                                *port = strtol(optarg, NULL, 10);
                                 break;
                         case 'N':
                                 if (strtol(optarg, NULL, 10) < MAX_SEQ_NUMBER / 2)
-                                        config.N = strtol(optarg, NULL, 10);
+                                        config->N = strtol(optarg, NULL, 10);
                                 break;
                         case 't':
-                                config.rto_msec = strtol(optarg, NULL, 10);
+                                config->rto_msec = strtol(optarg, NULL, 10);
                                 break;
                         case 'A':
-                                config.is_adaptive = true;
+                                config->is_adaptive = true;
                                 break;
                         case 'P':
-                                config.probability = strtol(optarg, NULL, 10) / 100;
+                                config->probability = strtol(optarg, NULL, 10) / 100;
                                 break;
                         case 'h':
                                 return (argc != 2) ? ERROR : HELP;
@@ -82,24 +76,47 @@ enum app_usages parse_cmd(int argc, char **argv, char *address)
         return (valid_cmd) ? STANDARD : ERROR;
 }
 
-int connect_to_server(const char *address_string)
+bool set_sockadrr_in(struct sockaddr_in *server_sockaddr, const char *address_string, unsigned short int port)
+{
+        memset(server_sockaddr, 0x0, sizeof(struct sockaddr_in));
+	server_sockaddr->sin_family = AF_INET;
+	server_sockaddr->sin_port = htons(port);
+        if (inet_pton(AF_INET, address_string, &server_sockaddr->sin_addr) <= 0) {
+                error_handler("\"inet_pton()\" failed."); 
+                return false;
+        } 
+
+        return true;
+}
+
+int connect_to_server(const char *address_string, unsigned short int port)
 {
         int fd;
+        gbn_ftp_header_t header;
+        char *conn_message;
+        struct sockaddr_in server_sockaddr;
+        socklen_t sockaddr_size;
+
+        set_conn(&header, true);
+        conn_message = make_segment(header, NULL, 0);
 
         if ((fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
                 error_handler("\"socket()\" failed."); 
                 return -1;
         }
 
-        memset(&server_addr, 0x0, sizeof(server_addr));
-	server_addr.sin_family = AF_INET;
-	server_addr.sin_port = htons(server_port);
-        if (inet_pton(AF_INET, address_string, &server_addr.sin_addr) <= 0) {
-                error_handler("\"inet_pton()\" failed."); 
+        set_sockadrr_in(&server_sockaddr, address_string, port);
+        sendto(fd, conn_message, sizeof(gbn_ftp_header_t), MSG_NOSIGNAL, (struct sockaddr *) &server_sockaddr, sizeof(struct sockaddr_in));
+        recvfrom(fd, conn_message, sizeof(gbn_ftp_header_t), 0, (struct sockaddr *) &server_sockaddr, &sockaddr_size);
+
+        close(fd);
+
+        if ((fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+                error_handler("\"socket()\" failed."); 
                 return -1;
-        }        
-	
-	if (connect(fd, (struct sockaddr *) &server_addr, sizeof(struct sockaddr_in)) == -1) {
+        }
+
+	if (connect(fd, (struct sockaddr *) &server_sockaddr, sizeof(struct sockaddr_in)) == -1) {
                 error_handler("\"connect()\" failed.");
                 return -1;
         }
@@ -107,17 +124,17 @@ int connect_to_server(const char *address_string)
 	return fd;
 }
 
-void print_info_about_conn(const char* address_string)
+void print_info_about_conn(const char* address_string, unsigned short int port, struct gbn_config *configs)
 {
         char choice;
 
-        printf("Connecting to %s:%u ...\n", address_string, server_port);
+        printf("Connecting to %s:%u ...\n", address_string, port);
         choice = multi_choice("Do you want to see more details?", "yn", 2);
 
         if (choice == 'Y')
         {
                 printf("\nOther configs:\n\tWindow size..........: %u\n\tRetransmition timeout: %lu\n\tProbability..........: %.1f\n\tAdapitve timer.......: %s\n\n", 
-                        config.N, config.rto_msec, config.probability, (config.is_adaptive) ? "true" : "false");
+                        configs->N, configs->rto_msec, configs->probability, (configs->is_adaptive) ? "true" : "false");
                 
                 printf("Press enter key to continue ...\n");
                 getchar();
@@ -141,13 +158,9 @@ void main_menu()
 
                 switch (choice) {
                         case 'L': 
-                                gbn_send_ctrl_message(sockfd, LIST, (struct sockaddr *)&server_addr, &params, &config);
-                                break;
-                        case 'P':
-                                gbn_send_ctrl_message(sockfd, PUT, (struct sockaddr *)&server_addr, &params, &config);
-                                break; 
+                        case 'P': 
                         case 'G':
-                                gbn_send_ctrl_message(sockfd, GET, (struct sockaddr *)&server_addr, &params, &config);
+                                printf("Not implemented yet!\n\n");
                                 break;
                         case 'Q': printf("Bye bye!\n\n"); return;
                         default:
@@ -159,19 +172,22 @@ void main_menu()
 
 int main(int argc, char **argv)
 {
-        enum app_usages modality;
+        int sockfd;
+        unsigned short int server_port;
         char address_string[ADDRESS_STRING_LENGTH];
+        struct gbn_config config;
+        enum app_usages modality;
 
         memset(address_string, 0x0, ADDRESS_STRING_LENGTH);
 
         memcpy(&config, &DEFAULT_GBN_CONFIG, sizeof(config));
         server_port = DEFAULT_PORT;
 
-        modality = parse_cmd(argc, argv, address_string);
+        modality = parse_cmd(argc, argv, address_string, &config, &server_port);
 
         switch (modality) {
                 case STANDARD: 
-                        print_info_about_conn(address_string);
+                        print_info_about_conn(address_string, server_port, &config);
                         break;
                 case HELP:
                 case VERSION: 
@@ -187,14 +203,15 @@ int main(int argc, char **argv)
                         abort();        
         }   
 
-        if ((sockfd = connect_to_server(address_string)) == -1)
+        if ((sockfd = connect_to_server(address_string, server_port)) == -1)
                 exit_client(EXIT_FAILURE);
 
-        printf("Succesfully connected!\n");                
+        printf("Succesfully connected (fd = %d)!\n", sockfd);                
+        /*
         init_send_params(&params);   
 
         main_menu();
-
+        */
         close(sockfd);  
         return 0;
 }
