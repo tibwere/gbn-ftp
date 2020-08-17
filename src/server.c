@@ -6,6 +6,8 @@
 #include <getopt.h>
 #include <stdlib.h>
 #include <pthread.h>
+#include <time.h>
+#include <sys/select.h>
 
 #include "gbnftp.h" 
 #include "common.h"
@@ -24,6 +26,7 @@ struct worker_port {
 struct thread_arguments {
         unsigned short int port;
         struct sockaddr_in client_sockaddr;
+        struct gbn_config configs;
 };
 
 
@@ -39,7 +42,7 @@ enum app_usages parse_cmd(int argc, char **argv, struct gbn_config *conf, long *
 int init_socket(unsigned short int port);
 struct worker_port *init_ports(long size);
 unsigned short int get_available_port(struct worker_port *ports, long size);
-void main_loop(int sockfd, struct worker_port *ports, long size);
+void main_loop(int sockfd, struct worker_port *ports, long size, const struct gbn_config *configs);
 
 
 void exit_server(int status) 
@@ -58,7 +61,8 @@ int finalize_connection(struct thread_arguments *targs)
                 return -1;
 
         char *conn_message = make_segment(header, NULL, 0);
-        sendto(fd, conn_message, sizeof(gbn_ftp_header_t), MSG_NOSIGNAL, (struct sockaddr *) &targs->client_sockaddr, sizeof(struct sockaddr_in));   
+        gbn_send(fd, conn_message, sizeof(gbn_ftp_header_t), &targs->client_sockaddr, &targs->configs);
+
         return fd;
 }
 
@@ -66,8 +70,34 @@ void * worker(void *args)
 {
         struct thread_arguments *conn_info = (struct thread_arguments *)args;
         int sockfd = finalize_connection(conn_info);
+        fd_set read_fds;
+        struct timeval tv;
+        int retval;
+        char message[sizeof(gbn_ftp_header_t) + CHUNK_SIZE];
 
         printf("Successfully connected (fd = %d)\n", sockfd);
+
+        while (true) {
+                
+                FD_ZERO(&read_fds);
+                FD_SET(sockfd, &read_fds);
+                tv.tv_sec = 0;
+                tv.tv_usec = conn_info->configs.rto_usec;
+
+                retval = select(sockfd + 1, &read_fds, NULL, NULL, &tv);
+
+                if (retval == -1) {
+                        error_handler("\"select()\" failed.");
+                        return NULL;
+                } else if (retval) {
+                        recvfrom(sockfd, message, sizeof(gbn_ftp_header_t) + CHUNK_SIZE, 0, (struct sockaddr *) &conn_info->client_sockaddr, NULL);
+                        break;
+                }  else {
+                        printf("Client inactive: CLOSE CONNECTION\n");
+                        close(sockfd);
+                        return NULL;
+                }
+        }        
 
         return NULL;
 }
@@ -98,13 +128,13 @@ enum app_usages parse_cmd(int argc, char **argv, struct gbn_config *conf, long *
                                         conf->N = strtol(optarg, NULL, 10);
                                 break;
                         case 't':
-                                conf->rto_msec = strtol(optarg, NULL, 10);
+                                conf->rto_usec = strtol(optarg, NULL, 10);
                                 break;
                         case 'A':
                                 conf->is_adaptive = true;
                                 break;
                         case 'P':
-                                conf->probability = strtol(optarg, NULL, 10) / 100;
+                                conf->probability = (double) strtol(optarg, NULL, 10) / (double) 100;
                                 break;
                         case 'h':
                                 return (argc != 2) ? ERROR : HELP;
@@ -183,7 +213,7 @@ unsigned short int get_available_port(struct worker_port *ports, long size)
         return PORT_NOT_AVAILABLE;
 }
 
-void main_loop(int sockfd, struct worker_port *ports, long tpsize)
+void main_loop(int sockfd, struct worker_port *ports, long tpsize, const struct gbn_config *configs)
 {
         ssize_t recv_size;
         char buff[sizeof(gbn_ftp_header_t)];
@@ -200,11 +230,12 @@ void main_loop(int sockfd, struct worker_port *ports, long tpsize)
                 memset(&args, 0x0, sizeof(struct thread_arguments));
 
                 recv_size = recvfrom(sockfd, buff, sizeof(gbn_ftp_header_t), 0, (struct sockaddr *)&client_sockaddr, &len);
+                
                 if (recv_size != sizeof(gbn_ftp_header_t)) {
                         error_handler("\"recvfrom()\" failed.");
                         break;
                 }
-                
+
                 get_segment(buff, &header, NULL, recv_size);
 
                 if (is_conn(header)) {
@@ -219,6 +250,7 @@ void main_loop(int sockfd, struct worker_port *ports, long tpsize)
                         }
                         args->port = worker_port;
                         args->client_sockaddr = client_sockaddr;
+                        memcpy(&args->configs, configs, sizeof(struct gbn_config));
                         if (pthread_create(&dummy, NULL, worker, args)) {
                                 error_handler("\"pthread_create()\" failed.");
                                 break;   
@@ -237,6 +269,8 @@ int main(int argc, char **argv)
 
         long concurrenty_connections = sysconf(_SC_NPROCESSORS_ONLN) << 2;
 
+        srand(time(0));
+
         memcpy(&config, &DEFAULT_GBN_CONFIG, sizeof(config));
         acceptance_port = DEFAULT_PORT;
 
@@ -245,7 +279,7 @@ int main(int argc, char **argv)
         switch(modality) {
                 case STANDARD: 
                         printf("Configs:\n\tN: %u\n\trcvtimeout: %lu\n\tprobability: %.1f\n\tport: %u\n\tadapitve: %s\n\n", 
-                                config.N, config.rto_msec, config.probability, acceptance_port, (config.is_adaptive) ? "true" : "false");
+                                config.N, config.rto_usec, config.probability, acceptance_port, (config.is_adaptive) ? "true" : "false");
                         break;
                 case HELP:
                         printf("\n\tusage: gbn-ftp-server [options]\n");
@@ -254,7 +288,7 @@ int main(int argc, char **argv)
                         printf("\t\t-N [--wndsize]\t<size>\t\tWindow size (for GBN)\n");
                         printf("\t\t-t [--rto]\t<timeout>\tRetransmition timeout (for GBN)\n");
                         printf("\t\t-A [--adaptive]\t\t\tTimer adaptative\n");
-                        printf("\t\t-P [--prob]\t<percentage>\tSend probability (from 0 to 1)\n");
+                        printf("\t\t-P [--prob]\t<percentage>\tLoss probability\n");
                         printf("\t\t-s [--tpsize]\t<size>\t\tMax number of concurrenty connections\n");
                         printf("\t\t-h [--version]\t\t\tVersion of gbn-ftp-server\n");
                         exit_server(EXIT_SUCCESS);
@@ -275,7 +309,7 @@ int main(int argc, char **argv)
         worker_ports = init_ports(concurrenty_connections);
         acceptance_sockfd = init_socket(acceptance_port);
 
-        main_loop(acceptance_sockfd, worker_ports, concurrenty_connections);
+        main_loop(acceptance_sockfd, worker_ports, concurrenty_connections, &config);
 
         close(acceptance_sockfd);        
         exit_server(EXIT_SUCCESS);

@@ -4,6 +4,7 @@
 #include <arpa/inet.h>
 
 #include "gbnftp.h"
+#include "common.h"
 
 const struct gbn_config DEFAULT_GBN_CONFIG = {
         16, 1000, false, 0.2
@@ -78,28 +79,51 @@ char * make_segment(gbn_ftp_header_t header, char *payload, size_t payload_size)
 {
         char *message;
         long unsigned header_size = sizeof(gbn_ftp_header_t);
+        gbn_ftp_header_t header_temp = htonl(header);
 
         if ((message = malloc(header_size + payload_size)) == NULL)
                 return NULL;
 
-
-        snprintf(message, header_size, "%u", header);
+        memcpy(message, &header_temp, header_size);
         memcpy((message + header_size), payload, payload_size);
 
         return message;
+}
 
+char * make_cmd_segment(enum message_type type)
+{
+        gbn_ftp_header_t header;
+        
+        set_sequence_number(&header, 0);
+
+        switch(type) {
+                case LIST: 
+                        set_message_type(&header, LIST); 
+                        break;
+                case PUT:
+                        set_message_type(&header, PUT); 
+                        break;
+                case GET: 
+                        set_message_type(&header, GET); 
+                        break;
+                case ACK_OR_RESP: 
+                        set_message_type(&header, ACK_OR_RESP); 
+                        break;
+                default:
+                        fprintf(stderr, "Invalid condition at %s:%d\n", __FILE__, __LINE__);
+                        abort();
+        }
+
+        return make_segment(header, NULL, 0);
 }
 
 void get_segment(char *message, gbn_ftp_header_t *header, char *payload, size_t message_size)
 {
         long unsigned header_size = sizeof(gbn_ftp_header_t);
-
-        char header_raw[header_size + 1];
         
         if (header != NULL) {
-                memcpy(header_raw, message, header_size);
-                header_raw[header_size] = '\n';
-                *header = strtol(header_raw, NULL, 10);
+                memcpy(header, message, header_size);
+                *header = ntohl(*header);
         }
         
         if (payload != NULL)
@@ -113,27 +137,15 @@ void init_send_params(struct gbn_send_params *params)
         params->next_seq_num = 0;
 }
 
-ssize_t gbn_send_ctrl_message(int socket, enum message_type type, const struct sockaddr *dest_addr, struct gbn_send_params *params, struct gbn_config *configs)
+ssize_t gbn_send(int socket, const void *message, size_t length, const struct sockaddr_in *sockaddr_in, const struct gbn_config *configs)
 {
-        gbn_ftp_header_t header;
-
-        unsigned long header_size = sizeof(gbn_ftp_header_t);
-        unsigned long addr_size = sizeof(struct sockaddr_in);
-
-        if (params->next_seq_num < params->base + configs->N) {
-                set_sequence_number(&header, params->next_seq_num++);
-                set_message_type(&header, type);
-                set_last(&header, true);
-                sendto(socket, make_segment(header, NULL, 0), header_size, MSG_NOSIGNAL, dest_addr, addr_size);
+        if (rand_double() > configs->probability) {
+                if (sockaddr_in)
+                        return sendto(socket, message, length, MSG_NOSIGNAL, (struct sockaddr *) sockaddr_in, sizeof(struct sockaddr_in));
+                else
+                        return send(socket, message, length, MSG_NOSIGNAL);
         }
 
         return 0;
-}
+}   
 
-/*
-ssize_t gbn_send_file(int socket, const void *payload, size_t payload_size, const struct sockaddr *dest_addr, 
-        struct gbn_send_params *params, struct gbn_config *configs, enum message_type type)
-{
-        return 0;
-}
-*/

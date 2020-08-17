@@ -22,7 +22,7 @@
 
 struct gbn_config {
         unsigned int N;
-        unsigned long rto_msec;
+        unsigned long rto_usec;
         bool is_adaptive;
         float probability;
 };
@@ -59,6 +59,7 @@ bool is_conn(gbn_ftp_header_t header);
 char * make_segment(gbn_ftp_header_t header, char *payload, size_t payload_size);
 void get_segment(char *message, gbn_ftp_header_t *header, char *payload, size_t message_size);
 void init_send_params(struct gbn_send_params *params);
-ssize_t gbn_send_ctrl_message(int socket, enum message_type type, const struct sockaddr *dest_addr, struct gbn_send_params *params, struct gbn_config *configs);
+ssize_t gbn_send(int socket, const void *message, size_t length, const struct sockaddr_in *sockaddr_in, const struct gbn_config *configs);
+char * make_cmd_segment(enum message_type type);
 
 #endif

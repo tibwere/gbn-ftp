@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
+#include <time.h>
+#include <sys/select.h>
 
 #include "gbnftp.h" 
 #include "common.h"
@@ -24,9 +26,9 @@ extern int opterr;
 void exit_client(int status);
 enum app_usages parse_cmd(int argc, char **argv, char *address, struct gbn_config *config, unsigned short int *port);
 bool set_sockadrr_in(struct sockaddr_in *server_sockaddr, const char *address_string, unsigned short int port);
-int connect_to_server(const char *address_string, unsigned short int port);
+int connect_to_server(const char *address_string, unsigned short int port, const struct gbn_config *config);
 void print_info_about_conn(const char* address_string, unsigned short int port, struct gbn_config *configs);
-void main_menu(void);
+void main_menu(int socket, struct gbn_send_params *params, struct gbn_config *config);
 
 void exit_client(int status) 
 {
@@ -65,7 +67,7 @@ enum app_usages parse_cmd(int argc, char **argv, char *address, struct gbn_confi
                                         config->N = strtol(optarg, NULL, 10);
                                 break;
                         case 't':
-                                config->rto_msec = strtol(optarg, NULL, 10);
+                                config->rto_usec = strtol(optarg, NULL, 10);
                                 break;
                         case 'A':
                                 config->is_adaptive = true;
@@ -99,39 +101,61 @@ bool set_sockadrr_in(struct sockaddr_in *server_sockaddr, const char *address_st
         return true;
 }
 
-int connect_to_server(const char *address_string, unsigned short int port)
+int connect_to_server(const char *address_string, unsigned short int port, const struct gbn_config *config)
 {
-        int fd;
+        int sockfd;
         gbn_ftp_header_t header;
         char *conn_message;
         struct sockaddr_in server_sockaddr;
-        socklen_t sockaddr_size;
+        fd_set read_fds;
+        struct timeval tv;
+        int retval;
 
         set_conn(&header, true);
         conn_message = make_segment(header, NULL, 0);
 
-        if ((fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
                 error_handler("\"socket()\" failed."); 
                 return -1;
         }
 
         set_sockadrr_in(&server_sockaddr, address_string, port);
-        sendto(fd, conn_message, sizeof(gbn_ftp_header_t), MSG_NOSIGNAL, (struct sockaddr *) &server_sockaddr, sizeof(struct sockaddr_in));
-        recvfrom(fd, conn_message, sizeof(gbn_ftp_header_t), 0, (struct sockaddr *) &server_sockaddr, &sockaddr_size);
+        
+        while (true) {
+                
+                FD_ZERO(&read_fds);
+                FD_SET(sockfd, &read_fds);
+                tv.tv_sec = 0;
+                tv.tv_usec = config->rto_usec;
 
-        close(fd);
+                gbn_send(sockfd, conn_message, sizeof(gbn_ftp_header_t), &server_sockaddr, config);
 
-        if ((fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+                retval = select(sockfd + 1, &read_fds, NULL, NULL, &tv);
+
+                if (retval == -1) {
+                        error_handler("\"select()\" failed.");
+                        return -1;
+                } 
+                
+                if (retval) {
+                        recvfrom(sockfd, conn_message, sizeof(gbn_ftp_header_t), 0, (struct sockaddr *) &server_sockaddr, NULL);
+                        break;
+                }  
+        }
+
+        close(sockfd);
+
+        if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
                 error_handler("\"socket()\" failed."); 
                 return -1;
         }
 
-	if (connect(fd, (struct sockaddr *) &server_sockaddr, sizeof(struct sockaddr_in)) == -1) {
+	if (connect(sockfd, (struct sockaddr *) &server_sockaddr, sizeof(struct sockaddr_in)) == -1) {
                 error_handler("\"connect()\" failed.");
                 return -1;
         }
 	
-	return fd;
+	return sockfd;
 }
 
 void print_info_about_conn(const char* address_string, unsigned short int port, struct gbn_config *configs)
@@ -144,14 +168,47 @@ void print_info_about_conn(const char* address_string, unsigned short int port, 
         if (choice == 'Y')
         {
                 printf("\nOther configs:\n\tWindow size..........: %u\n\tRetransmition timeout: %lu\n\tProbability..........: %.1f\n\tAdapitve timer.......: %s\n\n", 
-                        configs->N, configs->rto_msec, configs->probability, (configs->is_adaptive) ? "true" : "false");
+                        configs->N, configs->rto_usec, configs->probability, (configs->is_adaptive) ? "true" : "false");
                 
                 printf("Press enter key to continue ...\n");
                 getchar();
         }        
 }
 
-void main_menu(void)
+int list(int socket, struct gbn_send_params *params, struct gbn_config *config)
+{
+        fd_set read_fds;
+        struct timeval tv;
+        char *cmd_message = make_cmd_segment(LIST);
+        int retval;
+
+        while (true) {
+                
+                FD_ZERO(&read_fds);
+                FD_SET(socket, &read_fds);
+                tv.tv_sec = 0;
+                tv.tv_usec = config->rto_usec;
+
+                gbn_send(socket, cmd_message, sizeof(gbn_ftp_header_t), NULL, config);
+
+                retval = select(socket + 1, &read_fds, NULL, NULL, &tv);
+
+                if (retval == -1) {
+                        error_handler("\"select()\" failed.");
+                        return -1;
+                } 
+                
+                if (retval)
+                        break;
+        }
+
+        params->next_seq_num ++;
+
+        return 0;
+
+}
+
+void main_menu(int socket, struct gbn_send_params *params, struct gbn_config *config)
 {
         char choice;
 
@@ -168,6 +225,8 @@ void main_menu(void)
 
                 switch (choice) {
                         case 'L': 
+                                list(socket, params, config);
+                                break;
                         case 'P': 
                         case 'G':
                                 printf("Not implemented yet!\n\n");
@@ -187,9 +246,13 @@ int main(int argc, char **argv)
         char address_string[ADDRESS_STRING_LENGTH];
         struct gbn_config config;
         enum app_usages modality;
+        struct gbn_send_params send_params;
+
+        srand(time(0));
 
         memset(address_string, 0x0, ADDRESS_STRING_LENGTH);
 
+        init_send_params(&send_params);
         memcpy(&config, &DEFAULT_GBN_CONFIG, sizeof(config));
         server_port = DEFAULT_PORT;
 
@@ -207,7 +270,7 @@ int main(int argc, char **argv)
                         printf("\t\t-N [--wndsize]\t<size>\t\tWindow size (for GBN)\n");
                         printf("\t\t-t [--rto]\t<timeout>\tRetransmition timeout (for GBN)\n");
                         printf("\t\t-A [--adaptive]\t\t\tTimer adaptative\n");
-                        printf("\t\t-P [--prob]\t<percentage>\tSend probability (from 0 to 1)\n");
+                        printf("\t\t-P [--prob]\t<percentage>\tLoss probability (from 0 to 1)\n");
                         printf("\t\t-h [--version]\t\t\tVersion of gbn-ftp-client\n");
                         exit_client(EXIT_SUCCESS);
                         break;
@@ -224,15 +287,13 @@ int main(int argc, char **argv)
                         abort();        
         }   
 
-        if ((sockfd = connect_to_server(address_string, server_port)) == -1)
+        if ((sockfd = connect_to_server(address_string, server_port, &config)) == -1)
                 exit_client(EXIT_FAILURE);
 
-        printf("Succesfully connected (fd = %d)!\n", sockfd);                
-        /*
-        init_send_params(&params);   
+        printf("Succesfully connected (fd = %d)!\n", sockfd);                   
 
-        main_menu();
-        */
+        main_menu(sockfd, &send_params, &config);
+
         close(sockfd);  
         return 0;
 }

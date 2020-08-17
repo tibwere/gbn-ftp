@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 #include <errno.h>
@@ -71,4 +72,9 @@ char multi_choice(const char *question, const char *choices, int no_choices)
 
         printf("Sorry not compliant input, please retry!\n");
     }
+}
+
+double rand_double(void)
+{
+        return (double) rand() / (double) RAND_MAX;
 }
