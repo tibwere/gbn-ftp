@@ -25,7 +25,7 @@ struct thread_arguments {
         int pipe_fd;
 };
 
-void * recv_worker(void * args) 
+void *recv_worker(void * args) 
 {
         struct thread_arguments *conn_info = (struct thread_arguments *)args;
         fd_set read_fds;
@@ -121,7 +121,7 @@ void *send_worker(void *args)
 
 void create_workers() 
 {
-       struct thread_arguments *rargs, *wargs;
+        struct thread_arguments *rargs, *wargs;
         pthread_t dummy;
         int pipe_fds[2];
 
