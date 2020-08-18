@@ -27,11 +27,6 @@ struct gbn_config {
         float probability;
 };
 
-struct gbn_send_params {
-        unsigned int base;
-        unsigned int next_seq_num;
-};
-
 /* STRUTTURA DELL'HEADER DEL PROTOCOLLO
  * 4 BYTE (32 bit)
  * 28 bit dedicati al numero di sequenza (268435455 numeri possibili)
@@ -58,7 +53,6 @@ void set_conn(gbn_ftp_header_t *header, bool is_conn);
 bool is_conn(gbn_ftp_header_t header);
 char * make_segment(gbn_ftp_header_t header, char *payload, size_t payload_size);
 void get_segment(char *message, gbn_ftp_header_t *header, char *payload, size_t message_size);
-void init_send_params(struct gbn_send_params *params);
 ssize_t gbn_send(int socket, const void *message, size_t length, const struct sockaddr_in *sockaddr_in, const struct gbn_config *configs);
 char * make_cmd_segment(enum message_type type);
 

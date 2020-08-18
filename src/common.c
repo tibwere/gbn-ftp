@@ -7,6 +7,8 @@
 #include "gbnftp.h"
 #include "common.h"
 
+extern const struct gbn_config DEFAULT_GBN_CONFIG;
+
 void error_handler(const char *message)
 {
         if (errno != 0)
@@ -72,6 +74,18 @@ char multi_choice(const char *question, const char *choices, int no_choices)
 
         printf("Sorry not compliant input, please retry!\n");
     }
+}
+
+struct gbn_config *init_configurations(void) 
+{
+        struct gbn_config *cfg;
+
+        if ((cfg = malloc(sizeof(struct gbn_config))) == NULL)
+                return NULL;
+
+        memcpy(cfg, &DEFAULT_GBN_CONFIG, sizeof(struct gbn_config));
+
+        return cfg;
 }
 
 double rand_double(void)

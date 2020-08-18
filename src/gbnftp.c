@@ -7,7 +7,7 @@
 #include "common.h"
 
 const struct gbn_config DEFAULT_GBN_CONFIG = {
-        16, 1000, false, 0.2
+        16, 1000000, false, 0.2
 };
 
 void set_sequence_number(gbn_ftp_header_t *header, unsigned int seq_no) 
@@ -128,13 +128,6 @@ void get_segment(char *message, gbn_ftp_header_t *header, char *payload, size_t 
         
         if (payload != NULL)
                 memcpy(payload, (message + header_size), message_size - header_size);
-}
-
-void init_send_params(struct gbn_send_params *params)
-{
-        memset(params, 0x0, sizeof(struct gbn_send_params));
-        params->base = 0;
-        params->next_seq_num = 0;
 }
 
 ssize_t gbn_send(int socket, const void *message, size_t length, const struct sockaddr_in *sockaddr_in, const struct gbn_config *configs)
