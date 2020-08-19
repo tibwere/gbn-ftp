@@ -12,7 +12,10 @@ const struct gbn_config DEFAULT_GBN_CONFIG = {
 
 void set_sequence_number(gbn_ftp_header_t *header, unsigned int seq_no) 
 {
-        *header = (seq_no % MAX_SEQ_NUMBER) << FLAGS_SIZE;
+        int flags = *header & FLAGMASK;
+        int seq = (seq_no % MAX_SEQ_NUMBER) << FLAGS_SIZE;
+
+        *header = seq | flags;
 }
 
 unsigned int get_sequence_number(gbn_ftp_header_t header)
@@ -22,7 +25,6 @@ unsigned int get_sequence_number(gbn_ftp_header_t header)
 
 void set_message_type(gbn_ftp_header_t *header, enum message_type type)
 {
-        // reset della maschera di bit
         *header >>= 2;
         *header <<= 2;
 
@@ -57,6 +59,8 @@ void set_last(gbn_ftp_header_t *header, bool is_last)
 {
         if (is_last)
                 *header |= LASTMASK;
+        else
+                *header &= ~LASTMASK;
 }
 
 bool is_last(gbn_ftp_header_t header)
@@ -66,8 +70,11 @@ bool is_last(gbn_ftp_header_t header)
 
 void set_conn(gbn_ftp_header_t *header, bool is_conn)
 {
-     if (is_conn)
-                *header |= CONNMASK;   
+        if (is_conn)
+                *header |= CONNMASK;
+        else
+                *header &= ~CONNMASK;
+        
 }
 
 bool is_conn(gbn_ftp_header_t header)
@@ -75,7 +82,7 @@ bool is_conn(gbn_ftp_header_t header)
         return ((header & CONNMASK) == CONNMASK) ? true : false;
 }
 
-char * make_segment(gbn_ftp_header_t header, const char *payload, size_t payload_size)
+static char * make_segment(gbn_ftp_header_t header, const char *payload, size_t payload_size)
 {
         char *message;
         long unsigned header_size = sizeof(gbn_ftp_header_t);
@@ -90,34 +97,7 @@ char * make_segment(gbn_ftp_header_t header, const char *payload, size_t payload
         return message;
 }
 
-char * make_cmd_segment(enum message_type type)
-{
-        gbn_ftp_header_t header;
-        
-        set_sequence_number(&header, 0);
-
-        switch(type) {
-                case LIST: 
-                        set_message_type(&header, LIST); 
-                        break;
-                case PUT:
-                        set_message_type(&header, PUT); 
-                        break;
-                case GET: 
-                        set_message_type(&header, GET); 
-                        break;
-                case ACK_OR_RESP: 
-                        set_message_type(&header, ACK_OR_RESP); 
-                        break;
-                default:
-                        fprintf(stderr, "Invalid condition at %s:%d\n", __FILE__, __LINE__);
-                        abort();
-        }
-
-        return make_segment(header, NULL, 0);
-}
-
-void get_segment(char *message, gbn_ftp_header_t *header, char *payload, size_t message_size)
+static void get_segment(char *message, gbn_ftp_header_t *header, char *payload, size_t message_size)
 {
         long unsigned header_size = sizeof(gbn_ftp_header_t);
         
@@ -139,7 +119,8 @@ ssize_t gbn_send(int socket, gbn_ftp_header_t header, const void *payload, size_
         if((message = make_segment(header, payload, payload_length)) == NULL) 
                 return -1;
 
-        if (rand_double() > configs->probability) {
+        // una volta implementato il timer rimuovere l'or true
+        if (rand_double() > configs->probability || true) {
                 if (sockaddr_in)
                         send_size = sendto(socket, message, length, MSG_NOSIGNAL, (struct sockaddr *) sockaddr_in, sizeof(struct sockaddr_in));
                 else
@@ -171,4 +152,27 @@ ssize_t gbn_receive(int socket, gbn_ftp_header_t *header, char *payload, const s
 
         return received_size;
 }
+
+
+bool is_syn_pkt(gbn_ftp_header_t header)
+{
+        return is_conn(header) && (get_sequence_number(header) == 0);
+}
+
+bool is_synack_pkt(gbn_ftp_header_t header, const char *payload) 
+{
+        return is_conn(header) && (get_sequence_number(header) == 0) && (strncmp(payload, "0", 1) == 0) && get_message_type(header) == ACK_OR_RESP;
+
+}
+
+bool is_ack_pkt(gbn_ftp_header_t header, const char *payload, unsigned int *ack_no_ptr)
+{
+        bool result = (get_message_type(header) == ACK_OR_RESP);
+
+        if (result)
+                *ack_no_ptr = strtol(payload, NULL, 10);
+        
+        return result;
+}
+
 

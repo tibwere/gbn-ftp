@@ -132,11 +132,6 @@ void *send_worker(void *args)
         int retval;
         char buff[CMD_SIZE];
 
-        printf("Worker no. %ld [Client connected: %s:%d]\n", 
-                id, 
-                inet_ntoa((winfo[id].client_sockaddr).sin_addr), 
-                ntohs((winfo[id].client_sockaddr).sin_port));
-
         winfo[id].socket = finalize_connection(id);
 
         pthread_create(&recv_tid, NULL, recv_worker, args);
@@ -189,16 +184,61 @@ void exit_server(int status)
 int finalize_connection(long index)
 {
         int fd;
-        gbn_ftp_header_t header;
-        set_conn(&header, true);
+        unsigned int ack_no;
+        gbn_ftp_header_t send_header;
+        gbn_ftp_header_t recv_header;
+        fd_set read_fds;
+        int retval;
+        char ack_no_str[CHUNK_SIZE];
+        bool is_ack;
+
+        set_conn(&send_header, true);
+        set_sequence_number(&send_header, winfo[index].next_seq_num++);
+        set_message_type(&send_header, ACK_OR_RESP);
+
+        memset(ack_no_str, 0x0, CHUNK_SIZE);
 
         if ((fd = init_socket(winfo[index].port)) == -1)
                 return -1;
-        
-        if (gbn_send(fd, header, NULL, 0, &winfo[index].client_sockaddr, config) == -1) {
-                error_handler("\"gbn_send()\" failed.");
-                pause();
+
+
+        while(true) {
+                FD_ZERO(&read_fds);
+                FD_SET(fd, &read_fds);
+
+                if (gbn_send(fd, send_header, "0", 1, &winfo[index].client_sockaddr, config) == -1) {
+                        error_handler("\"gbn_send()\" failed.");
+                }
+
+                retval = select(fd + 1, &read_fds, NULL, NULL, NULL);
+
+                if (retval == -1) {
+                        error_handler("\"select()\" failed.");
+                        return -1;  
+                } else {
+                        if (gbn_receive(fd, &recv_header, ack_no_str, &winfo[index].client_sockaddr) == -1) {
+                                error_handler("\"gbn_receive()\" failed.");
+                                return -1;
+                        }
+
+                        is_ack = is_ack_pkt(recv_header, ack_no_str, &ack_no);
+
+                        if (!(is_ack && (ack_no == winfo[index].base))) {
+                                error_handler("Connection protocol broken.");
+                                return -1;
+                        }
+
+                        winfo[index].base++;
+                        break;
+
+                }
         }
+
+
+        printf("Worker no. %ld [Client connected: %s:%d]\n", 
+                index, 
+                inet_ntoa((winfo[index].client_sockaddr).sin_addr), 
+                ntohs((winfo[index].client_sockaddr).sin_port));
 
         return fd;
 }
@@ -352,7 +392,7 @@ void main_loop(int acc_socket, long tpsize)
                         return;
                 }
 
-                if (is_conn(header)) {
+                if (is_syn_pkt(header)) {
                         if ((worker_info_index = get_available_worker(tpsize)) == -1) {
                                 //non ci sono piu' porte disponibili
                                 break;

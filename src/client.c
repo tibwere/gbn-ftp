@@ -116,8 +116,10 @@ int connect_to_server(const char *address_string)
         fd_set read_fds;
         struct timeval tv;
         int retval;
+        char ack_no[CHUNK_SIZE];
 
         set_conn(&header, true);
+        set_sequence_number(&header, next_seq_num++);
 
         if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
                 error_handler("\"socket()\" failed."); 
@@ -125,6 +127,7 @@ int connect_to_server(const char *address_string)
         }
 
         set_sockadrr_in(&server_sockaddr, address_string, server_port);
+        memset(ack_no, 0x0, CHUNK_SIZE);
 
         while (true) {
                 
@@ -137,7 +140,7 @@ int connect_to_server(const char *address_string)
                         error_handler("\"gbn_send()\" failed.");
                         return -1;
                 }
-                                                
+
                 retval = select(sockfd + 1, &read_fds, NULL, NULL, &tv);
 
                 if (retval == -1) {
@@ -148,10 +151,17 @@ int connect_to_server(const char *address_string)
                 if (retval) {
                         memset(&server_sockaddr, 0x0, sizeof(struct sockaddr_in));
                         
-                        if(gbn_receive(sockfd, &header, NULL, &server_sockaddr) == -1) {
+                        if(gbn_receive(sockfd, &header, ack_no, &server_sockaddr) == -1) {
                                 error_handler("\"gbn_receive()\" failed");
                                 return -1;
                         }
+
+                        if (!is_synack_pkt(header, ack_no)) {
+                                error_handler("Connection protocol broken!");
+                                return -1;
+                        }
+
+                        ++base;
 
                         break;
                 }  
@@ -169,6 +179,16 @@ int connect_to_server(const char *address_string)
                 error_handler("\"connect()\" failed.");
                 return -1;
         }
+
+        set_conn(&header, false);
+        set_sequence_number(&header, next_seq_num++);
+        set_message_type(&header, ACK_OR_RESP);
+
+        if (gbn_send(sockfd, header, "0", 1, NULL, config) == -1) {
+                error_handler("\"gbn_send()\" failed.");
+                return -1;
+        }
+
 	
 	return sockfd;
 }
