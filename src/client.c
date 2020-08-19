@@ -18,6 +18,7 @@
 #define CLS system("clear")
 
 
+extern bool verbose;
 extern char *optarg;
 extern int opterr;
 
@@ -47,6 +48,7 @@ enum app_usages parse_cmd(int argc, char **argv, char *address)
 {
         int opt;
         bool valid_cmd = false;
+        verbose = false;
 
         struct option long_options[] = {
                 {"address",     required_argument,      0, 'a'},
@@ -57,10 +59,11 @@ enum app_usages parse_cmd(int argc, char **argv, char *address)
                 {"prob",        required_argument,      0, 'P'},
                 {"help",        no_argument,            0, 'h'},
                 {"version",     no_argument,            0, 'v'},
+                {"verbose",     no_argument,            0, 'V'},
                 {0,             0,                      0, 0}
         };
 
-        while ((opt = getopt_long(argc, argv, "a:p:N:t:A:P:hv", long_options, NULL)) != -1) {
+        while ((opt = getopt_long(argc, argv, "a:p:N:t:A:P:hvV", long_options, NULL)) != -1) {
                 switch (opt) {
                         case 'a':
                                 strncpy(address, optarg, ADDRESS_STRING_LENGTH);
@@ -81,6 +84,9 @@ enum app_usages parse_cmd(int argc, char **argv, char *address)
                                 break;
                         case 'P':
                                 config->probability = strtol(optarg, NULL, 10) / 100;
+                                break;
+                        case 'V':
+                                verbose = true;
                                 break;
                         case 'h':
                                 return (argc != 2) ? ERROR : HELP;
@@ -312,6 +318,7 @@ int main(int argc, char **argv)
                         printf("\t\t-A [--adaptive]\t\t\tTimer adaptative\n");
                         printf("\t\t-P [--prob]\t<percentage>\tLoss probability (from 0 to 1)\n");
                         printf("\t\t-h [--version]\t\t\tVersion of gbn-ftp-client\n");
+                        printf("\t\t-V [--verbose]\t\t\tPrint verbose version of error\n");
                         exit_client(EXIT_SUCCESS);
                         break;
                 case VERSION: 

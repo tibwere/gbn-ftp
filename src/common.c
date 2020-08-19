@@ -7,7 +7,24 @@
 #include "gbnftp.h"
 #include "common.h"
 
+bool verbose;
 extern const struct gbn_config DEFAULT_GBN_CONFIG;
+
+void interractive_perror(const char *message, const char *filename, int line_num)
+{
+        fprintf(stderr, "%s\n", message);
+
+        printf("%d\n", verbose);
+
+        if (verbose) {
+                fprintf(stderr, "Invalid condition at %s:%d\n", filename, line_num);
+                if (errno != 0)
+                        fprintf(stderr, "The error was: %s (%d)\n", strerror(errno), errno);
+                else
+                        fprintf(stderr, "No more detailes available\n");
+        }
+}
+
 
 void error_handler(const char *message)
 {
@@ -17,6 +34,7 @@ void error_handler(const char *message)
                 fprintf(stderr, "%s\n", message);
 
 }
+
 
 size_t get_input(unsigned int length, char *string, bool not_null)
 {
