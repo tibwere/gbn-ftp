@@ -10,11 +10,9 @@
 bool verbose;
 extern const struct gbn_config DEFAULT_GBN_CONFIG;
 
-void interractive_perror(const char *message, const char *filename, int line_num)
+void detailed_perror(const char *message, const char *filename, int line_num)
 {
         fprintf(stderr, "%s\n", message);
-
-        printf("%d\n", verbose);
 
         if (verbose) {
                 fprintf(stderr, "Invalid condition at %s:%d\n", filename, line_num);
