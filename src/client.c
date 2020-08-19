@@ -112,15 +112,12 @@ int connect_to_server(const char *address_string)
 {
         int sockfd;
         gbn_ftp_header_t header;
-        char *conn_message;
         struct sockaddr_in server_sockaddr;
-        socklen_t addrlen = sizeof(struct sockaddr_in);
         fd_set read_fds;
         struct timeval tv;
         int retval;
 
         set_conn(&header, true);
-        conn_message = make_segment(header, NULL, 0);
 
         if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
                 error_handler("\"socket()\" failed."); 
@@ -136,11 +133,11 @@ int connect_to_server(const char *address_string)
                 tv.tv_sec = 0;
                 tv.tv_usec = config->rto_usec;
 
-                if (sendto(sockfd, conn_message, sizeof(gbn_ftp_header_t), MSG_NOSIGNAL, (struct sockaddr *) &server_sockaddr, sizeof(struct sockaddr_in)) == -1) {
-                        perror("\"sendto()\" failed.");
+                if (gbn_send(sockfd, header, NULL, 0, &server_sockaddr, config) == -1) {
+                        error_handler("\"gbn_send()\" failed.");
                         return -1;
                 }
-                                
+                                                
                 retval = select(sockfd + 1, &read_fds, NULL, NULL, &tv);
 
                 if (retval == -1) {
@@ -150,8 +147,9 @@ int connect_to_server(const char *address_string)
                 
                 if (retval) {
                         memset(&server_sockaddr, 0x0, sizeof(struct sockaddr_in));
-                        if(recvfrom(sockfd, conn_message, sizeof(gbn_ftp_header_t), 0, (struct sockaddr *) &server_sockaddr, &addrlen) == -1) {
-                                error_handler("\"recvfrom()\" failed");
+                        
+                        if(gbn_receive(sockfd, &header, NULL, &server_sockaddr) == -1) {
+                                error_handler("\"gbn_receive()\" failed");
                                 return -1;
                         }
 
@@ -196,8 +194,10 @@ int list(void)
 {
         fd_set read_fds;
         struct timeval tv;
-        char *cmd_message = make_cmd_segment(LIST);
+        gbn_ftp_header_t header;
         int retval;
+
+        set_message_type(&header, LIST);
 
         while (true) {
                 
@@ -206,7 +206,7 @@ int list(void)
                 tv.tv_sec = 0;
                 tv.tv_usec = config->rto_usec;
 
-                gbn_send(sockfd, cmd_message, sizeof(gbn_ftp_header_t), NULL, config);
+                gbn_send(sockfd, header, NULL, 0, NULL, config);
 
                 retval = select(sockfd + 1, &read_fds, NULL, NULL, &tv);
 

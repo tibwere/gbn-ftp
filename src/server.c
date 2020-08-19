@@ -64,7 +64,6 @@ void *recv_worker(void * args)
         gbn_ftp_header_t recv_header;
         char message[sizeof(gbn_ftp_header_t)];
         ssize_t recv_size;
-        socklen_t addrlen = sizeof(struct sockaddr_in);
 
         while (true) {
                 
@@ -81,13 +80,11 @@ void *recv_worker(void * args)
                         memset(buff, 0x0, CMD_SIZE);
                         memset(message, 0x0, sizeof(gbn_ftp_header_t));
 
-                        recv_size = recvfrom(winfo[id].socket, message, sizeof(gbn_ftp_header_t), 0, (struct sockaddr *)&winfo[id].client_sockaddr, &addrlen);
+                        recv_size = gbn_receive(winfo[id].socket, &recv_header, NULL, &winfo[id].client_sockaddr);
                         if (recv_size != sizeof(gbn_ftp_header_t)) {
-                                error_handler("\"recvfrom()\" failed.");
+                                error_handler("\"gbn_receive()\" failed.");
                                 break;
                         }
-
-                        get_segment(message, &recv_header, NULL, recv_size);
 
                         switch(get_message_type(recv_header)) {
                                 case LIST: snprintf(buff, CMD_SIZE, "LIST"); break;
@@ -195,13 +192,11 @@ int finalize_connection(long index)
 
         if ((fd = init_socket(winfo[index].port)) == -1)
                 return -1;
-
-        char *conn_message = make_segment(header, NULL, 0);
-        if (sendto(fd, conn_message, sizeof(gbn_ftp_header_t), MSG_NOSIGNAL, (struct sockaddr *)&winfo[index].client_sockaddr, sizeof(winfo[index].client_sockaddr)) == -1) {
-                error_handler("\"sendto()\" failed.");
+        
+        if (gbn_send(fd, header, NULL, 0, &winfo[index].client_sockaddr, config) == -1) {
+                error_handler("\"gbn_send()\" failed.");
                 pause();
         }
-        //gbn_send(fd, conn_message, sizeof(gbn_ftp_header_t), &winfo[index].client_sockaddr, config);
 
         return fd;
 }
@@ -323,22 +318,19 @@ void start_workers(long index, struct sockaddr_in *client_sockaddr)
 void main_loop(long tpsize)
 {
         struct sockaddr_in addr;
-        socklen_t addrlen = sizeof(struct sockaddr_in);
-        char buff[sizeof(gbn_ftp_header_t)];
         ssize_t received_size;
         gbn_ftp_header_t header;
         int worker_info_index;
 
         while(true) {
                 memset(&addr, 0x0, sizeof(struct sockaddr_in));
-                received_size = recvfrom(acceptance_sockfd, buff, sizeof(gbn_ftp_header_t), 0, (struct sockaddr *)&addr, &addrlen);
+                
+                received_size = gbn_receive(acceptance_sockfd, &header, NULL, &addr);
 
                 if (received_size != sizeof(gbn_ftp_header_t)) {
                         error_handler("\"recvfrom()\" failed.");
                         return;
                 }
-
-                get_segment(buff, &header, NULL, sizeof(gbn_ftp_header_t));
 
                 if (is_conn(header)) {
                         if ((worker_info_index = get_available_worker(tpsize)) == -1) {

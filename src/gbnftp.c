@@ -75,7 +75,7 @@ bool is_conn(gbn_ftp_header_t header)
         return ((header & CONNMASK) == CONNMASK) ? true : false;
 }
 
-char * make_segment(gbn_ftp_header_t header, char *payload, size_t payload_size)
+char * make_segment(gbn_ftp_header_t header, const char *payload, size_t payload_size)
 {
         char *message;
         long unsigned header_size = sizeof(gbn_ftp_header_t);
@@ -130,15 +130,45 @@ void get_segment(char *message, gbn_ftp_header_t *header, char *payload, size_t 
                 memcpy(payload, (message + header_size), message_size - header_size);
 }
 
-ssize_t gbn_send(int socket, const void *message, size_t length, const struct sockaddr_in *sockaddr_in, const struct gbn_config *configs)
+ssize_t gbn_send(int socket, gbn_ftp_header_t header, const void *payload, size_t payload_length, const struct sockaddr_in *sockaddr_in, const struct gbn_config *configs)
 {
+        ssize_t send_size;
+        char *message; 
+        size_t length = payload_length + sizeof(gbn_ftp_header_t);
+        
+        if((message = make_segment(header, payload, payload_length)) == NULL) 
+                return -1;
+
         if (rand_double() > configs->probability) {
                 if (sockaddr_in)
-                        return sendto(socket, message, length, MSG_NOSIGNAL, (struct sockaddr *) sockaddr_in, sizeof(struct sockaddr_in));
+                        send_size = sendto(socket, message, length, MSG_NOSIGNAL, (struct sockaddr *) sockaddr_in, sizeof(struct sockaddr_in));
                 else
-                        return send(socket, message, length, MSG_NOSIGNAL);
+                        send_size = send(socket, message, length, MSG_NOSIGNAL);
+                
+                free(message);
+                return send_size;
+                        
+        } else {
+                return 0;
         }
+}
 
-        return 0;
-}   
+ssize_t gbn_receive(int socket, gbn_ftp_header_t *header, char *payload, const struct sockaddr_in *sockaddr_in)
+{
+        ssize_t received_size;
+        socklen_t sockaddr_size = sizeof(struct sockaddr_in);
+        size_t message_size = sizeof(gbn_ftp_header_t) + CHUNK_SIZE;
+        char message[message_size];
+        
+        memset(message, 0, message_size);
+
+        if (sockaddr_in)
+                received_size = recvfrom(socket, message, message_size, 0, (struct sockaddr *) sockaddr_in, &sockaddr_size);
+        else
+                received_size = recv(socket, message, message_size, 0);
+
+        get_segment(message, header, payload, received_size);
+
+        return received_size;
+}
 

@@ -51,9 +51,10 @@ void set_last(gbn_ftp_header_t *header, bool is_last);
 bool is_last(gbn_ftp_header_t header);
 void set_conn(gbn_ftp_header_t *header, bool is_conn);
 bool is_conn(gbn_ftp_header_t header);
-char * make_segment(gbn_ftp_header_t header, char *payload, size_t payload_size);
+char * make_segment(gbn_ftp_header_t header, const char *payload, size_t payload_size);
 void get_segment(char *message, gbn_ftp_header_t *header, char *payload, size_t message_size);
-ssize_t gbn_send(int socket, const void *message, size_t length, const struct sockaddr_in *sockaddr_in, const struct gbn_config *configs);
+ssize_t gbn_send(int socket, gbn_ftp_header_t header, const void *payload, size_t payload_length, const struct sockaddr_in *sockaddr_in, const struct gbn_config *configs);
+ssize_t gbn_receive(int socket, gbn_ftp_header_t *header, char *payload, const struct sockaddr_in *sockaddr_in);
 char * make_cmd_segment(enum message_type type);
 
 #endif
