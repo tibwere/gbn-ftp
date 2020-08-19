@@ -39,8 +39,10 @@ extern int opterr;
 
 struct worker_info *winfo;
 struct gbn_config *config;
-int acceptance_sockfd;
-unsigned short int acceptance_port;
+pthread_mutex_t tpool_mutex;
+pthread_cond_t tpool_cond_var;
+unsigned int active_threads;
+
 
 void *recv_worker(void *args);
 void *send_worker(void *args);
@@ -50,7 +52,7 @@ enum app_usages parse_cmd(int argc, char **argv, long *tpsize_ptr, unsigned shor
 int init_socket(unsigned short int port);
 long get_available_worker(long nmemb);
 void start_workers(long index, struct sockaddr_in *client_sockaddr);
-void main_loop(long size);
+void main_loop(int acc_socket, long size);
 struct worker_info *init_worker_info(long nmemb);
 
 
@@ -139,11 +141,6 @@ void *send_worker(void *args)
 
         pthread_create(&recv_tid, NULL, recv_worker, args);
 
-        if (pthread_mutex_lock(&winfo[id].mutex)) {
-                error_handler("\"mutex_lock()\" failed.");
-                pthread_exit(NULL);
-        }
-
         while(true) {
                 FD_ZERO(&read_fds);
                 FD_SET(winfo[id].read_pipe_fd, &read_fds);
@@ -156,6 +153,11 @@ void *send_worker(void *args)
                         pthread_exit(NULL);
                 } else {
                         read(winfo[id].read_pipe_fd, buff, CMD_SIZE);
+                }
+
+                if (pthread_mutex_lock(&winfo[id].mutex)) {
+                        error_handler("\"mutex_lock()\" failed.");
+                        pthread_exit(NULL);
                 }
 
                 while(winfo[id].next_seq_num >= winfo[id].base + config->N) {
@@ -315,17 +317,35 @@ void start_workers(long index, struct sockaddr_in *client_sockaddr)
         pthread_create(&tid, NULL, send_worker, (void *) index);
 }
 
-void main_loop(long tpsize)
+void main_loop(int acc_socket, long tpsize)
 {
         struct sockaddr_in addr;
         ssize_t received_size;
         gbn_ftp_header_t header;
         int worker_info_index;
 
+	if (pthread_mutex_lock(&tpool_mutex)) {
+		error_handler("\"mutex_lock()\" failed.");
+		return;
+	}
+
         while(true) {
+
+                while(active_threads >= tpsize) {
+			if (pthread_cond_wait(&tpool_cond_var, &tpool_mutex)) {
+				error_handler("\"cond_wait()\" failed");
+				return;	
+			}
+		}
+
+                if (pthread_mutex_unlock(&tpool_mutex)) {
+                        error_handler("\"mutex_unlock()\" failed.");
+                        return;
+                }
+
                 memset(&addr, 0x0, sizeof(struct sockaddr_in));
                 
-                received_size = gbn_receive(acceptance_sockfd, &header, NULL, &addr);
+                received_size = gbn_receive(acc_socket, &header, NULL, &addr);
 
                 if (received_size != sizeof(gbn_ftp_header_t)) {
                         error_handler("\"recvfrom()\" failed.");
@@ -340,6 +360,13 @@ void main_loop(long tpsize)
                 
                         start_workers(worker_info_index, &addr);
                 }  
+
+                if (pthread_mutex_lock(&tpool_mutex)) {
+                        error_handler("\"mutex_lock()\" failed.");
+                        return;
+                }
+
+                active_threads ++;
         }
 
 }
@@ -366,11 +393,14 @@ struct worker_info *init_worker_info(long nmemb)
 
 int main(int argc, char **argv)
 {
+        int acceptance_sockfd;
+        unsigned short int acceptance_port;
         enum app_usages modality;
         long concurrenty_connections;
 
         srand(time(0));
         concurrenty_connections = sysconf(_SC_NPROCESSORS_ONLN) << 2;
+        active_threads = 0;
 
         if((config = init_configurations()) == NULL) {
                 error_handler("\"init_configurations()\" failed.");
@@ -415,6 +445,9 @@ int main(int argc, char **argv)
                         abort();        
         } 
 
+        pthread_mutex_init(&tpool_mutex, NULL);
+        pthread_cond_init(&tpool_cond_var, NULL);
+
         
         if ((acceptance_sockfd = init_socket(acceptance_port)) == -1) {
                 error_handler("\"init_socket()\" failed");
@@ -422,7 +455,7 @@ int main(int argc, char **argv)
 
         printf("Server listening on fd %d\n", acceptance_sockfd);
 
-        main_loop(concurrenty_connections);
+        main_loop(acceptance_sockfd, concurrenty_connections);
 
         close(acceptance_sockfd);        
         exit_server(EXIT_SUCCESS);
