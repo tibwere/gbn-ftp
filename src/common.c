@@ -23,17 +23,6 @@ void detailed_perror(const char *message, const char *filename, int line_num)
         }
 }
 
-
-void error_handler(const char *message)
-{
-        if (errno != 0)
-                fprintf(stderr, "%s\nError %d: %s\n", message, errno, strerror(errno));
-        else
-                fprintf(stderr, "%s\n", message);
-
-}
-
-
 size_t get_input(unsigned int length, char *string, bool not_null)
 {
         char c;

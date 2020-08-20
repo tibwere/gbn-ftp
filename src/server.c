@@ -14,7 +14,6 @@
 
 
 #define CMD_SIZE 16
-#define ERRSIZE 256
 #define FOLDER_PATH "/home/tibwere/.gbn-ftp-public/"
 #define START_WORKER_PORT 29290
 
@@ -513,7 +512,7 @@ int main(int argc, char **argv)
                         break;                    
                 default:
                         fprintf(stderr, "Invalid condition at %s:%d\n", __FILE__, __LINE__);
-                        exit_server(EXIT_FAILURE);        
+                        abort();        
         } 
 
         if (pthread_mutex_init(&tpool_mutex, NULL)) {

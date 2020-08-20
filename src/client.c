@@ -17,7 +17,6 @@
 #define ADDRESS_STRING_LENGTH 1024
 #define CLS system("clear")
 
-
 extern bool verbose;
 extern char *optarg;
 extern int opterr;
@@ -32,11 +31,10 @@ unsigned int expected_seq_num;
 
 void exit_client(int status);
 enum app_usages parse_cmd(int argc, char **argv, char *address);
-bool set_sockadrr_in(struct sockaddr_in *server_sockaddr, const char *address_string, unsigned short int port);
-int connect_to_server(const char *address_string);
+bool set_sockadrr_in(struct sockaddr_in *server_sockaddr, const char *address_string, unsigned short int port, char *error_message);
+int connect_to_server(const char *address_string, char *error_message);
 void print_info_about_conn(const char* address_string);
-int list(void);
-void main_menu(void);
+void list(const char *address_string);
 
 void exit_client(int status) 
 {
@@ -101,20 +99,21 @@ enum app_usages parse_cmd(int argc, char **argv, char *address)
         return (valid_cmd) ? STANDARD : ERROR;
 }
 
-bool set_sockadrr_in(struct sockaddr_in *server_sockaddr, const char *address_string, unsigned short int port)
+bool set_sockadrr_in(struct sockaddr_in *server_sockaddr, const char *address_string, unsigned short int port, char *error_message)
 {
         memset(server_sockaddr, 0x0, sizeof(struct sockaddr_in));
 	server_sockaddr->sin_family = AF_INET;
 	server_sockaddr->sin_port = htons(port);
+        
         if (inet_pton(AF_INET, address_string, &server_sockaddr->sin_addr) <= 0) {
-                error_handler("\"inet_pton()\" failed."); 
+                snprintf(error_message, ERRSIZE, "Unable to convert address from string to internal logical representation"); 
                 return false;
         } 
 
         return true;
 }
 
-int connect_to_server(const char *address_string)
+int connect_to_server(const char *address_string, char *error_message)
 {
         int sockfd;
         gbn_ftp_header_t header;
@@ -128,11 +127,13 @@ int connect_to_server(const char *address_string)
         set_sequence_number(&header, next_seq_num++);
 
         if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
-                error_handler("\"socket()\" failed."); 
+                snprintf(error_message, ERRSIZE, "Unable to get socket file descriptor (1st step)");
                 return -1;
         }
 
-        set_sockadrr_in(&server_sockaddr, address_string, server_port);
+        if (!set_sockadrr_in(&server_sockaddr, address_string, server_port, error_message)) 
+                return -1;
+
         memset(ack_no, 0x0, CHUNK_SIZE);
 
         while (true) {
@@ -142,28 +143,28 @@ int connect_to_server(const char *address_string)
                 tv.tv_sec = 0;
                 tv.tv_usec = config->rto_usec;
 
+                /* SEND SYN */
                 if (gbn_send(sockfd, header, NULL, 0, &server_sockaddr, config) == -1) {
-                        error_handler("\"gbn_send()\" failed.");
+                        snprintf(error_message, ERRSIZE, "3-way handshake protocol for connection broken (SYN)");
                         return -1;
                 }
 
                 retval = select(sockfd + 1, &read_fds, NULL, NULL, &tv);
 
                 if (retval == -1) {
-                        error_handler("\"select()\" failed.");
+                        snprintf(error_message, ERRSIZE, "Unable to receive SYNACK from server (select)");
                         return -1;
                 } 
-                
                 if (retval) {
                         memset(&server_sockaddr, 0x0, sizeof(struct sockaddr_in));
                         
                         if(gbn_receive(sockfd, &header, ack_no, &server_sockaddr) == -1) {
-                                error_handler("\"gbn_receive()\" failed");
+                                snprintf(error_message, ERRSIZE, "Unable to receive SYNACK from server (gbn_select)");
                                 return -1;
                         }
 
                         if (!is_synack_pkt(header, ack_no)) {
-                                error_handler("Connection protocol broken!");
+                                snprintf(error_message, ERRSIZE, "3-way handshake protocol for connection broken (SYNACK)");
                                 return -1;
                         }
 
@@ -177,12 +178,12 @@ int connect_to_server(const char *address_string)
         close(sockfd);
 
         if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
-                error_handler("\"socket()\" failed."); 
+                snprintf(error_message, ERRSIZE, "Unable to get socket file descriptor (2nd step)");
                 return -1;
         }
 
 	if (connect(sockfd, (struct sockaddr *) &server_sockaddr, sizeof(struct sockaddr_in)) == -1) {
-                error_handler("\"connect()\" failed.");
+                snprintf(error_message, ERRSIZE, "Connection to server failed");
                 return -1;
         }
 
@@ -191,7 +192,7 @@ int connect_to_server(const char *address_string)
         set_message_type(&header, ACK_OR_RESP);
 
         if (gbn_send(sockfd, header, "0", 1, NULL, config) == -1) {
-                error_handler("\"gbn_send()\" failed.");
+                snprintf(error_message, ERRSIZE, "3-way handshake protocol for connection broken (ACK)");
                 return -1;
         }
 
@@ -199,93 +200,23 @@ int connect_to_server(const char *address_string)
 	return sockfd;
 }
 
-void print_info_about_conn(const char* address_string)
+void list(const char *address_string) 
 {
-        char choice;
+        char err_mess[ERRSIZE];
 
-        printf("Connecting to %s:%u ...\n", address_string, server_port);
-        choice = multi_choice("Do you want to see more details?", "yn", 2);
+        memset(err_mess, 0x0, ERRSIZE);
 
-        if (choice == 'Y')
-        {
-                printf("\nOther configs:\n\tWindow size..........: %u\n\tRetransmition timeout: %lu\n\tProbability..........: %.1f\n\tAdapitve timer.......: %s\n\n", 
-                        config->N, config->rto_usec, config->probability, (config->is_adaptive) ? "true" : "false");
-                
-                printf("Press enter key to continue ...\n");
-                getchar();
-        }        
-}
+        if ((sockfd = connect_to_server(address_string, err_mess)) == -1)
+                exit_client(EXIT_FAILURE);
 
-int list(void)
-{
-        fd_set read_fds;
-        struct timeval tv;
-        gbn_ftp_header_t header;
-        int retval;
-
-        set_message_type(&header, LIST);
-
-        while (true) {
-                
-                FD_ZERO(&read_fds);
-                FD_SET(sockfd, &read_fds);
-                tv.tv_sec = 0;
-                tv.tv_usec = config->rto_usec;
-
-                gbn_send(sockfd, header, NULL, 0, NULL, config);
-
-                retval = select(sockfd + 1, &read_fds, NULL, NULL, &tv);
-
-                if (retval == -1) {
-                        error_handler("\"select()\" failed.");
-                        return -1;
-                } 
-                
-                if (retval)
-                        break;
-        }
-
-        next_seq_num ++;
-
-        return 0;
-
-}
-
-void main_menu(void)
-{
-        char choice;
-
-        while (true) {
-                CLS;
-                printf("Welcome to GBN-FTP service\n\n");
-                printf("*** What do you wanna do? ***\n\n");
-                printf("[L]IST all available files\n");
-                printf("[P]UT a file on the server\n");
-                printf("[G]ET a file from server\n");
-                printf("[Q]uit\n");
-
-                choice = multi_choice("\nPick an option", "LPGQ", 4);
-
-                switch (choice) {
-                        case 'L': 
-                                list();
-                                break;
-                        case 'P': 
-                        case 'G':
-                                printf("Not implemented yet!\n\n");
-                                break;
-                        case 'Q': printf("Bye bye!\n\n"); return;
-                        default:
-                                fprintf(stderr, "Invalid condition at %s:%d\n", __FILE__, __LINE__);
-                                abort();
-                }
-        }      
+        close(sockfd);
 }
 
 int main(int argc, char **argv)
 {
         char address_string[ADDRESS_STRING_LENGTH];
         enum app_usages modality;
+        char choice;
 
         srand(time(0));
 
@@ -296,7 +227,7 @@ int main(int argc, char **argv)
         expected_seq_num = 0;
         
         if((config = init_configurations()) == NULL) {
-                error_handler("\"init_configurations()\" failed.");
+                perr("Unable to load default configurations for server");
                 exit_client(EXIT_FAILURE); 
         }
         
@@ -306,7 +237,6 @@ int main(int argc, char **argv)
 
         switch (modality) {
                 case STANDARD: 
-                        print_info_about_conn(address_string);
                         break;
                 case HELP:
                         printf("\n\tusage: gbn-ftp-client [options]\n");
@@ -326,22 +256,40 @@ int main(int argc, char **argv)
                         exit_client(EXIT_SUCCESS);
                         break;
                 case ERROR:
-                        printf("Unable to parse command line.\n");
+                        fprintf(stderr, "Wrong argument inserted.\nPlease re-run gbn-ftp-client with -h [--help] option.\n");
                         exit_client(EXIT_FAILURE);   
                         break;                   
                 default:
                         fprintf(stderr, "Invalid condition at %s:%d\n", __FILE__, __LINE__);
                         abort();        
-        }   
+        }
 
-        if ((sockfd = connect_to_server(address_string)) == -1)
-                exit_client(EXIT_FAILURE);
+        while (true) {
+                CLS;
+                printf("Welcome to GBN-FTP service\n\n");
+                printf("*** What do you wanna do? ***\n\n");
+                printf("[L]IST all available files\n");
+                printf("[P]UT a file on the server\n");
+                printf("[G]ET a file from server\n");
+                printf("[Q]uit\n");
 
-        printf("Succesfully connected (fd = %d)!\n", sockfd);                   
+                choice = multi_choice("\nPick an option", "LPGQ", 4);
 
-        main_menu();
-
-        close(sockfd);  
+                switch (choice) {
+                        case 'L': list(address_string); break;
+                        case 'P': 
+                        case 'G':
+                                printf("Not implemented yet :c\n");
+                                break;
+                        case 'Q': 
+                                printf("Bye bye\n");
+                                break;
+                        default:
+                                fprintf(stderr, "Invalid condition at %s:%d\n", __FILE__, __LINE__);
+                                abort();
+                }
+        }    
+  
         return 0;
 }
 
