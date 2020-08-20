@@ -148,9 +148,9 @@ int connect_to_server(const char *address_string, char *error_message)
                         snprintf(error_message, ERRSIZE, "3-way handshake protocol for connection broken (SYN)");
                         return -1;
                 }
+                printf("Inviato il SYN\n");
 
                 retval = select(sockfd + 1, &read_fds, NULL, NULL, &tv);
-
                 if (retval == -1) {
                         snprintf(error_message, ERRSIZE, "Unable to receive SYNACK from server (select)");
                         return -1;
@@ -168,11 +168,12 @@ int connect_to_server(const char *address_string, char *error_message)
                                 return -1;
                         }
 
+                        printf("Qua\n");
+
                         ++base;
 
                         break;
                 }  
-                
         }
 
         close(sockfd);
@@ -196,18 +197,26 @@ int connect_to_server(const char *address_string, char *error_message)
                 return -1;
         }
 
-	
 	return sockfd;
 }
 
 void list(const char *address_string) 
 {
+        gbn_ftp_header_t header;
         char err_mess[ERRSIZE];
-
-        memset(err_mess, 0x0, ERRSIZE);
 
         if ((sockfd = connect_to_server(address_string, err_mess)) == -1)
                 exit_client(EXIT_FAILURE);
+
+        set_message_type(&header, LIST);
+        set_sequence_number(&header, next_seq_num++);
+
+        memset(err_mess, 0x0, ERRSIZE);
+
+        if (gbn_send(sockfd, header, NULL, 0, NULL, config) == -1) {
+                perr("Unable to send cmd to server (LIST)");
+                return;
+        }
 
         close(sockfd);
 }

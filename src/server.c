@@ -69,6 +69,7 @@ void *recv_worker(void * args)
         char err_mess[ERRSIZE];
         unsigned int ack_number;
         bool is_ack;
+        bool is_first = true;
 
         memset(err_mess, 0x0, ERRSIZE);
 
@@ -95,42 +96,50 @@ void *recv_worker(void * args)
                         }
 
                         if((is_ack = is_ack_pkt(recv_header, payload, &ack_number)) == true) {
-                                if (ack_number >= winfo[id].base)
-                                        winfo[id].base = ack_number;
-                        }
 
-                        
-                        printf("Worker no. %ld [Client connected: %s:%d]\n", 
-                                id, 
-                                inet_ntoa((winfo[id].client_sockaddr).sin_addr), 
-                                ntohs((winfo[id].client_sockaddr).sin_port));
+                                if (ack_number >= winfo[id].base) {
 
-                        snprintf(cmd_to_send, CMD_SIZE, "CONN");
-                        
-                        if (write(winfo[id].write_pipe_fd, cmd_to_send, CMD_SIZE) == -1) {
-                                snprintf(err_mess, ERRSIZE, "Unable to communicate via pipe to %ld-th sender", id);
-                                perr(err_mess);
-                                goto exit_from_receiver_thread;
-                        }
+                                        if (pthread_mutex_lock(&winfo[id].mutex)) {
+                                                snprintf(err_mess, ERRSIZE, "Syncronization protocol for worker threads broken (worker_mutex_%ld)", id);
+                                                perr(err_mess);
+                                                goto exit_from_receiver_thread;
+                                        }
+                                        
+                                        winfo[id].base = ack_number + 1;
 
-                        if (pthread_mutex_lock(&winfo[id].mutex)) {
-                                snprintf(err_mess, ERRSIZE, "Syncronization protocol for worker threads broken (worker_mutex_%ld)", id);
-                                perr(err_mess);
-                                goto exit_from_receiver_thread;
-                        }
-                        
-                        winfo[id].base++;
+                                        if (pthread_mutex_unlock(&winfo[id].mutex)) {
+                                                snprintf(err_mess, ERRSIZE, "Syncronization protocol for worker threads broken (worker_mutex_%ld)", id);
+                                                perr(err_mess);
+                                                goto exit_from_receiver_thread;
+                                        }
 
-                        if (pthread_mutex_unlock(&winfo[id].mutex)) {
-                                snprintf(err_mess, ERRSIZE, "Syncronization protocol for worker threads broken (worker_mutex_%ld)", id);
-                                perr(err_mess);
-                                goto exit_from_receiver_thread;
-                        }
+                                        if (pthread_cond_signal(&winfo[id].cond_var)) {
+                                                snprintf(err_mess, ERRSIZE, "Syncronization protocol for worker threads broken (worker_condvar_%ld)", id);
+                                                perr(err_mess);
+                                                goto exit_from_receiver_thread;
+                                        }
+                                }
 
-                        if (pthread_cond_signal(&winfo[id].cond_var)) {
-                                snprintf(err_mess, ERRSIZE, "Syncronization protocol for worker threads broken (worker_condvar_%ld)", id);
-                                perr(err_mess);
-                                goto exit_from_receiver_thread;
+                                if (is_first) {
+                                        printf("Worker no. %ld [Client connected: %s:%d]\n", 
+                                                id, 
+                                                inet_ntoa((winfo[id].client_sockaddr).sin_addr), 
+                                                ntohs((winfo[id].client_sockaddr).sin_port));
+                                }
+
+                        } else {
+                                switch(get_message_type(recv_header)) {
+                                        case LIST:
+                                                snprintf(cmd_to_send, CMD_SIZE, "LIST");
+                                                break;
+                                        default: break;
+                                }
+
+                                if (write(winfo[id].write_pipe_fd, cmd_to_send, CMD_SIZE) == -1) {
+                                        snprintf(err_mess, ERRSIZE, "Unable to communicate via pipe to %ld-th sender", id);
+                                        perr(err_mess);
+                                        goto exit_from_receiver_thread;
+                                }
                         }
 
                 }  else {
@@ -428,7 +437,6 @@ bool acceptance_loop(int acc_socket, long tpsize, char *error_message)
                 }
 
                 memset(&addr, 0x0, sizeof(struct sockaddr_in));
-                
                 received_size = gbn_receive(acc_socket, &header, NULL, &addr);
 
                 if (received_size != sizeof(gbn_ftp_header_t)) {
@@ -445,7 +453,7 @@ bool acceptance_loop(int acc_socket, long tpsize, char *error_message)
                         if (!start_workers(worker_info_index, &addr, error_message))
                                 return false;
 
-                }  
+                }
 
                 if (pthread_mutex_lock(&tpool_mutex)) {
                         snprintf(error_message, ERRSIZE, "Syncronization protocol for worker threads broken (tpool_mutex)");
