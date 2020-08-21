@@ -12,7 +12,7 @@ const struct gbn_config DEFAULT_GBN_CONFIG = {
 
 void set_sequence_number(gbn_ftp_header_t *header, unsigned int seq_no) 
 {
-        int flags = *header & FLAGMASK;
+        int flags = *header & FLAG_MASK;
         int seq = (seq_no % MAX_SEQ_NUMBER) << FLAGS_SIZE;
 
         *header = seq | flags;
@@ -25,14 +25,14 @@ unsigned int get_sequence_number(gbn_ftp_header_t header)
 
 void set_message_type(gbn_ftp_header_t *header, enum message_type type)
 {
-        *header >>= 2;
-        *header <<= 2;
+        *header >>= TYPE_SIZE;
+        *header <<= TYPE_SIZE;
 
         switch(type) {
-                case LIST: *header |= LISTMASK; break;
-                case PUT: *header |= PUTMASK; break;
-                case GET: *header |= GETMASK; break;
-                case ACK_OR_RESP: *header |= ARMASK; break;
+                case ZERO: *header |= ZERO_MASK; break; 
+                case LIST: *header |= LIST_MASK; break;
+                case PUT: *header |= PUT_MASK; break;
+                case GET: *header |= GET_MASK; break;
                 default:
                         fprintf(stderr, "Invalid condition at %s:%d\n", __FILE__, __LINE__);
                         abort();
@@ -41,45 +41,43 @@ void set_message_type(gbn_ftp_header_t *header, enum message_type type)
 
 enum message_type get_message_type(gbn_ftp_header_t header)
 {
-        unsigned int flags = header & TYPEMASK;
+        unsigned int flags = header & TYPE_MASK;
 
-        if (flags == LISTMASK)
+        if (flags == LIST_MASK)
                 return LIST;
-        else if (flags == PUTMASK)
+        else if (flags == PUT_MASK)
                 return PUT;
-        else if (flags == GETMASK)
+        else if (flags == GET_MASK)
                 return GET;
-        else if (flags == ARMASK)
-                return ACK_OR_RESP;
         else   
-                return ERR;
+                return ZERO;
 }
 
 void set_last(gbn_ftp_header_t *header, bool is_last)
 {
         if (is_last)
-                *header |= LASTMASK;
+                *header |= LAST_MASK;
         else
-                *header &= ~LASTMASK;
+                *header &= ~LAST_MASK;
 }
 
 bool is_last(gbn_ftp_header_t header)
 {
-        return ((header & LASTMASK) == LASTMASK) ? true : false;
+        return ((header & LAST_MASK) == LAST_MASK) ? true : false;
 }
 
-void set_conn(gbn_ftp_header_t *header, bool is_conn)
+void set_ack(gbn_ftp_header_t *header, bool is_conn)
 {
         if (is_conn)
-                *header |= CONNMASK;
+                *header |= ACK_MASK;
         else
-                *header &= ~CONNMASK;
+                *header &= ~ACK_MASK;
         
 }
 
-bool is_conn(gbn_ftp_header_t header)
+bool is_ack(gbn_ftp_header_t header)
 {
-        return ((header & CONNMASK) == CONNMASK) ? true : false;
+        return ((header & ACK_MASK) == ACK_MASK) ? true : false;
 }
 
 static char * make_segment(gbn_ftp_header_t header, const char *payload, size_t payload_size)
@@ -153,7 +151,7 @@ ssize_t gbn_receive(int socket, gbn_ftp_header_t *header, char *payload, const s
         return received_size;
 }
 
-
+/*
 bool is_syn_pkt(gbn_ftp_header_t header)
 {
         return is_conn(header) && (get_sequence_number(header) == 0);
@@ -174,5 +172,5 @@ bool is_ack_pkt(gbn_ftp_header_t header, const char *payload, unsigned int *ack_
         
         return result;
 }
-
+*/
 

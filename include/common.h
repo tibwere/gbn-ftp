@@ -1,7 +1,7 @@
 #ifndef COMMON_H
 #define COMMON_H
 
-#define ERRSIZE 256
+#define ERR_SIZE 256
 #define perr(mess) detailed_perror(mess, __FILE__, __LINE__)
 
 enum app_usages {

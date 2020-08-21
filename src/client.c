@@ -32,7 +32,7 @@ unsigned int expected_seq_num;
 void exit_client(int status);
 enum app_usages parse_cmd(int argc, char **argv, char *address);
 bool set_sockadrr_in(struct sockaddr_in *server_sockaddr, const char *address_string, unsigned short int port, char *error_message);
-int connect_to_server(const char *address_string, char *error_message);
+int connect_to_server(const char *address_string, enum message_type type, char *error_message);
 void print_info_about_conn(const char* address_string);
 void list(const char *address_string);
 
@@ -106,14 +106,14 @@ bool set_sockadrr_in(struct sockaddr_in *server_sockaddr, const char *address_st
 	server_sockaddr->sin_port = htons(port);
         
         if (inet_pton(AF_INET, address_string, &server_sockaddr->sin_addr) <= 0) {
-                snprintf(error_message, ERRSIZE, "Unable to convert address from string to internal logical representation"); 
+                snprintf(error_message, ERR_SIZE, "Unable to convert address from string to internal logical representation"); 
                 return false;
         } 
 
         return true;
 }
 
-int connect_to_server(const char *address_string, char *error_message)
+int connect_to_server(const char *address_string, enum message_type type, char *error_message)
 {
         int sockfd;
         gbn_ftp_header_t header;
@@ -123,11 +123,13 @@ int connect_to_server(const char *address_string, char *error_message)
         int retval;
         char ack_no[CHUNK_SIZE];
 
-        set_conn(&header, true);
+        set_ack(&header, false);
         set_sequence_number(&header, next_seq_num++);
+        set_message_type(&header, type);
+        set_last(&header, false);
 
         if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
-                snprintf(error_message, ERRSIZE, "Unable to get socket file descriptor (1st step)");
+                snprintf(error_message, ERR_SIZE, "Unable to get socket file descriptor (1st step)");
                 return -1;
         }
 
@@ -143,32 +145,29 @@ int connect_to_server(const char *address_string, char *error_message)
                 tv.tv_sec = 0;
                 tv.tv_usec = config->rto_usec;
 
-                /* SEND SYN */
+                /* SEND CMD */
                 if (gbn_send(sockfd, header, NULL, 0, &server_sockaddr, config) == -1) {
-                        snprintf(error_message, ERRSIZE, "3-way handshake protocol for connection broken (SYN)");
+                        snprintf(error_message, ERR_SIZE, "Unable to send LIST command to server");
                         return -1;
                 }
-                printf("Inviato il SYN\n");
 
                 retval = select(sockfd + 1, &read_fds, NULL, NULL, &tv);
                 if (retval == -1) {
-                        snprintf(error_message, ERRSIZE, "Unable to receive SYNACK from server (select)");
+                        snprintf(error_message, ERR_SIZE, "Unable to receive ACK from server (select)");
                         return -1;
                 } 
                 if (retval) {
                         memset(&server_sockaddr, 0x0, sizeof(struct sockaddr_in));
                         
                         if(gbn_receive(sockfd, &header, ack_no, &server_sockaddr) == -1) {
-                                snprintf(error_message, ERRSIZE, "Unable to receive SYNACK from server (gbn_select)");
+                                snprintf(error_message, ERR_SIZE, "Unable to receive ACK from server (gbn_select)");
                                 return -1;
                         }
 
-                        if (!is_synack_pkt(header, ack_no)) {
-                                snprintf(error_message, ERRSIZE, "3-way handshake protocol for connection broken (SYNACK)");
+                        if (!is_ack(header)) {
+                                snprintf(error_message, ERR_SIZE, "Comunication protocol broken");
                                 return -1;
                         }
-
-                        printf("Qua\n");
 
                         ++base;
 
@@ -179,21 +178,12 @@ int connect_to_server(const char *address_string, char *error_message)
         close(sockfd);
 
         if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
-                snprintf(error_message, ERRSIZE, "Unable to get socket file descriptor (2nd step)");
+                snprintf(error_message, ERR_SIZE, "Unable to get socket file descriptor (2nd step)");
                 return -1;
         }
 
 	if (connect(sockfd, (struct sockaddr *) &server_sockaddr, sizeof(struct sockaddr_in)) == -1) {
-                snprintf(error_message, ERRSIZE, "Connection to server failed");
-                return -1;
-        }
-
-        set_conn(&header, false);
-        set_sequence_number(&header, next_seq_num++);
-        set_message_type(&header, ACK_OR_RESP);
-
-        if (gbn_send(sockfd, header, "0", 1, NULL, config) == -1) {
-                snprintf(error_message, ERRSIZE, "3-way handshake protocol for connection broken (ACK)");
+                snprintf(error_message, ERR_SIZE, "Connection to server failed");
                 return -1;
         }
 
@@ -202,21 +192,10 @@ int connect_to_server(const char *address_string, char *error_message)
 
 void list(const char *address_string) 
 {
-        gbn_ftp_header_t header;
-        char err_mess[ERRSIZE];
+        char err_mess[ERR_SIZE];
 
-        if ((sockfd = connect_to_server(address_string, err_mess)) == -1)
+        if ((sockfd = connect_to_server(address_string, LIST, err_mess)) == -1)
                 exit_client(EXIT_FAILURE);
-
-        set_message_type(&header, LIST);
-        set_sequence_number(&header, next_seq_num++);
-
-        memset(err_mess, 0x0, ERRSIZE);
-
-        if (gbn_send(sockfd, header, NULL, 0, NULL, config) == -1) {
-                perr("Unable to send cmd to server (LIST)");
-                return;
-        }
 
         close(sockfd);
 }
