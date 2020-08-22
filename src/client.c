@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
@@ -9,6 +10,7 @@
 #include <string.h>
 #include <time.h>
 #include <sys/select.h>
+#include <fcntl.h>
 
 #include "gbnftp.h" 
 #include "common.h"
@@ -16,7 +18,6 @@
 
 #define ADDRESS_STRING_LENGTH 1024
 #define cls() system("clear")
-
 
 extern bool verbose;
 extern char *optarg;
@@ -31,7 +32,7 @@ struct gbn_config *config;
 void exit_client(int status);
 enum app_usages parse_cmd(int argc, char **argv, char *address);
 bool set_sockadrr_in(struct sockaddr_in *server_sockaddr, const char *address_string, unsigned short int port, char *error_message);
-int connect_to_server(const char *address_string, enum message_type type, char *error_message);
+int connect_to_server(const char *address_string, enum message_type type, const char *filename, size_t filename_length, char *error_message);
 void print_info_about_conn(const char* address_string);
 bool list(const char *address_string, char *error_message);
 
@@ -112,7 +113,7 @@ bool set_sockadrr_in(struct sockaddr_in *server_sockaddr, const char *address_st
         return true;
 }
 
-int connect_to_server(const char *address_string, enum message_type type, char *error_message)
+int connect_to_server(const char *address_string, enum message_type type, const char *filename, size_t filename_length, char *error_message)
 {
         int sockfd;
         gbn_ftp_header_t header;
@@ -134,6 +135,7 @@ int connect_to_server(const char *address_string, enum message_type type, char *
         if (!set_sockadrr_in(&server_sockaddr, address_string, server_port, error_message)) 
                 return -1;
 
+
         while (true) {
                 
                 FD_ZERO(&read_fds);
@@ -142,12 +144,13 @@ int connect_to_server(const char *address_string, enum message_type type, char *
                 tv.tv_usec = config->rto_usec;
 
                 /* SEND CMD */
-                if (gbn_send(sockfd, header, NULL, 0, &server_sockaddr, config) == -1) {
+                if (gbn_send(sockfd, header, filename, filename_length, &server_sockaddr, config) == -1) {
                         snprintf(error_message, ERR_SIZE, "Unable to send LIST command to server");
                         return -1;
                 }
-
+        
                 retval = select(sockfd + 1, &read_fds, NULL, NULL, &tv);
+
                 if (retval == -1) {
                         snprintf(error_message, ERR_SIZE, "Unable to receive ACK from server (select)");
                         return -1;
@@ -176,11 +179,78 @@ int connect_to_server(const char *address_string, enum message_type type, char *
 	return sockfd;
 }
 
+bool get_file(const char *address_string, char *error_message) 
+{
+        unsigned int expected_seq_num = 1;
+        unsigned int last_acked_seq_num = 0;
+        char payload[CHUNK_SIZE];
+        gbn_ftp_header_t recv_header;
+        gbn_ftp_header_t send_header;
+        ssize_t recv_size;
+        char filename[CHUNK_SIZE];
+        char full_path[2 * CHUNK_SIZE];
+        int fd;
+
+        memset(full_path, 0x0, 2 * CHUNK_SIZE);
+        memset(filename, 0x0, CHUNK_SIZE);
+
+        printf("Which file do you want to download? ");
+        fflush(stdout);
+        get_input(CHUNK_SIZE, filename, false);
+
+        snprintf(full_path, 2 * CHUNK_SIZE, "/home/%s/.gbn-ftp-download/%s", getenv("USER"), filename);
+
+        if((fd = open(full_path, O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) == -1) {
+                snprintf(error_message, ERR_SIZE, "Unable to create file");
+                return false;
+        }        
+        
+        set_ack(&send_header, true);
+        set_message_type(&send_header, GET);
+        set_last(&send_header, false);
+
+        printf("\nWait for downlaod ...\n\n");
+
+        if ((sockfd = connect_to_server(address_string, GET, filename, strlen(filename), error_message)) == -1)
+                return false;
+
+        do {
+                memset(payload, 0x0, CHUNK_SIZE);
+
+                if((recv_size = gbn_receive(sockfd, &recv_header, payload, NULL)) == -1) {
+                        snprintf(error_message, ERR_SIZE, "Unable to receive pkt from server (gbn_receive)");
+                        return false;
+                }
+
+                if (write(fd, payload, recv_size) == -1) {
+                        snprintf(error_message, ERR_SIZE, "Unable to print out info received from server");
+                        return false;  
+                }
+
+                if(get_sequence_number(recv_header) == expected_seq_num) 
+                        set_sequence_number(&send_header, expected_seq_num);
+                else
+                        set_sequence_number(&send_header, last_acked_seq_num);
+
+                if (gbn_send(sockfd, send_header, NULL, 0, NULL, config) == -1) {
+                        snprintf(error_message, ERR_SIZE, "Unable to send ACK to server");
+                        return false;
+                }
+
+
+        } while(!is_last(recv_header));
+
+        printf("\n\nFile succesfully downloaded!\nPress enter key to get back to menu\n");
+        getchar();
+
+        close(sockfd);
+        return true;
+}
+
 bool list(const char *address_string, char *error_message) 
 {
         unsigned int expected_seq_num = 1;
         unsigned int last_acked_seq_num = 0;
-        char err_mess[ERR_SIZE];
         char payload[CHUNK_SIZE];
         gbn_ftp_header_t recv_header;
         gbn_ftp_header_t send_header;
@@ -193,7 +263,7 @@ bool list(const char *address_string, char *error_message)
         cls();
         printf("AVAILABLE FILE ON SERVER\n\n");
 
-        if ((sockfd = connect_to_server(address_string, LIST, err_mess)) == -1)
+        if ((sockfd = connect_to_server(address_string, LIST, NULL, 0, error_message)) == -1)
                 return false;
 
         do {
@@ -292,13 +362,20 @@ int main(int argc, char **argv)
 
                 switch (choice) {
                         case 'L': 
-                                if (!list(address_string, err_mess)) 
+                                if (!list(address_string, err_mess)) {
                                         perr(err_mess);
+                                        choice = 'Q';
+                                }       
                                 break;
                         case 'P': 
-                        case 'G':
                                 printf("Not implemented yet :c\n");
                                 break;
+                        case 'G':
+                                if (!get_file(address_string, err_mess)) {
+                                        perr(err_mess);
+                                        choice = 'Q';
+                                }
+                                break;                                
                         case 'Q': 
                                 printf("Bye bye\n\n");
                                 break;

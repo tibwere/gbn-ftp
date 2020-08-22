@@ -15,8 +15,6 @@
 
 
 #define CMD_SIZE 128
-#define FOLDER_PATH "/home/tibwere/.gbn-ftp-public/"
-#define TMP_LS_PATH "/home/tibwere/.gbn-ftp-public/.tmp-ls"
 #define START_WORKER_PORT 29290
 
 
@@ -28,6 +26,7 @@ struct worker_info {
         pthread_mutex_t mutex;
         pthread_cond_t cond_var;
         enum message_type modality;
+        char filename[CHUNK_SIZE];
         unsigned int base;
         unsigned int next_seq_num;
         unsigned int expected_seq_num;
@@ -51,7 +50,7 @@ void exit_server(int status);
 enum app_usages parse_cmd(int argc, char **argv, long *tpsize_ptr, unsigned short int *port);
 int init_socket(unsigned short int port, char *error_message);
 long get_available_worker(long nmemb);
-bool start_workers(long index, struct sockaddr_in *client_sockaddr, enum message_type modality, char *error_message);
+bool start_workers(long index, struct sockaddr_in *client_sockaddr, enum message_type modality, const char *payload, char *error_message);
 bool acceptance_loop(int acc_socket, long size, char *error_message);
 struct worker_info *init_worker_info(long nmemb);
 
@@ -135,6 +134,7 @@ void *send_worker(void *args)
         char chunk_read[CHUNK_SIZE];
         ssize_t size_read;
         int fd;
+        char filename[2 * CHUNK_SIZE];
 
         memset(err_mess, 0x0, ERR_SIZE);
 
@@ -182,11 +182,27 @@ void *send_worker(void *args)
                                 goto exit_from_sender_thread;
                         }
 
-                        if ((fd = open(TMP_LS_PATH, O_RDONLY)) == -1) {
-                                snprintf(err_mess, ERR_SIZE, "Unable to open LS tmp file for %ld-th connection", id);
-                                perr(err_mess);
-                                goto exit_from_sender_thread;    
+                        memset(filename, 0x0, 2 * CHUNK_SIZE);
+
+                        if (winfo[id].modality == LIST) {
+                                snprintf(filename, 2 * CHUNK_SIZE, "/home/%s/.gbn-ftp-public/.tmp-ls", getenv("USER"));
+                                if ((fd = open(filename, O_RDONLY)) == -1) {
+                                        snprintf(err_mess, ERR_SIZE, "Unable to open LS tmp file for %ld-th connection", id);
+                                        perr(err_mess);
+                                        goto exit_from_sender_thread;    
+                                }
                         }
+
+                        if (winfo[id].modality == GET) {
+
+                                snprintf(filename, 2 * CHUNK_SIZE, "/home/%s/.gbn-ftp-public/%s", getenv("USER"), winfo[id].filename);
+                                if ((fd = open(filename, O_RDONLY)) == -1) {
+                                        snprintf(err_mess, ERR_SIZE, "Unable to retrive requested file for %ld-th connection", id);
+                                        perr(err_mess);
+                                        goto exit_from_sender_thread;
+                                }
+                        }
+
 
                         is_first = false;
                         printf("Worker no. %ld [Client connected: %s:%d (OP: %d)]\n", 
@@ -198,12 +214,12 @@ void *send_worker(void *args)
                 } else {
                         memset(chunk_read, 0x0, CHUNK_SIZE);
 
-                        set_message_type(&header, LIST);
+                        set_message_type(&header, winfo[id].modality);
                         set_sequence_number(&header, winfo[id].next_seq_num++);
                         set_ack(&header, false);
                         set_last(&header, false);
 
-                        size_read = pread(fd, chunk_read, CHUNK_SIZE, size_read);
+                        size_read = read(fd, chunk_read, CHUNK_SIZE);
 
                         if (size_read == -1) {
                                 snprintf(err_mess, ERR_SIZE, "Unable to read from LS tmp file for %ld-th connection", id);
@@ -217,7 +233,7 @@ void *send_worker(void *args)
                         }
                         
                         if (gbn_send(winfo[id].socket, header, chunk_read, size_read, &winfo[id].client_sockaddr, config) == -1) {
-                                snprintf(err_mess, ERR_SIZE, "Unable to send initial ACK for %ld-th connection (SYNACK)", id);
+                                snprintf(err_mess, ERR_SIZE, "Unable to send chunk to client for %ld-th connection", id);
                                 perr(err_mess);
                                 goto exit_from_sender_thread;
                         }
@@ -337,7 +353,7 @@ long get_available_worker(long nmemb)
         return -1;
 }
 
-bool start_workers(long index, struct sockaddr_in *client_sockaddr, enum message_type modality, char *error_message)
+bool start_workers(long index, struct sockaddr_in *client_sockaddr, enum message_type modality, const char *payload, char *error_message)
 {
         pthread_t tid;
 
@@ -354,6 +370,7 @@ bool start_workers(long index, struct sockaddr_in *client_sockaddr, enum message
         memcpy(&winfo[index].client_sockaddr, client_sockaddr, sizeof(struct sockaddr_in));
 
         winfo[index].modality = modality;
+        strncpy(winfo[index].filename, payload, CHUNK_SIZE);
 
         if (pthread_create(&tid, NULL, send_worker, (void *) index)) {
                 snprintf(error_message, ERR_SIZE, "Unable to spawn worker threads for %ld-th client", index);
@@ -387,7 +404,6 @@ struct worker_info *init_worker_info(long nmemb)
 bool acceptance_loop(int acc_socket, long tpsize, char *error_message)
 {
         struct sockaddr_in addr;
-        ssize_t received_size;
         gbn_ftp_header_t header;
         int worker_info_index;
         char payload[CHUNK_SIZE];
@@ -413,9 +429,8 @@ bool acceptance_loop(int acc_socket, long tpsize, char *error_message)
 
                 memset(&addr, 0x0, sizeof(struct sockaddr_in));
                 memset(payload, 0x0, CHUNK_SIZE);
-                received_size = gbn_receive(acc_socket, &header, payload, &addr);
 
-                if (received_size != sizeof(gbn_ftp_header_t)) {
+                if (gbn_receive(acc_socket, &header, payload, &addr) == -1) {
                         snprintf(error_message, ERR_SIZE, "Unable to receive command from client");
                         return false;
                 }
@@ -425,7 +440,7 @@ bool acceptance_loop(int acc_socket, long tpsize, char *error_message)
                         return false;
                 }
 
-                if (!start_workers(worker_info_index, &addr, get_message_type(header), error_message))
+                if (!start_workers(worker_info_index, &addr, get_message_type(header), payload, error_message))
                         return false;
 
                 if (pthread_mutex_lock(&tpool_mutex)) {
@@ -444,7 +459,7 @@ void create_tmp_ls_file(void)
         char cmd[CMD_SIZE];
 
         memset(cmd, 0x0, CMD_SIZE);
-        snprintf(cmd, CMD_SIZE, "ls %s > %s", FOLDER_PATH, TMP_LS_PATH);
+        snprintf(cmd, CMD_SIZE, "ls /home/%s/.gbn-ftp-public/ > /home/%s/.gbn-ftp-public/.tmp-ls", getenv("USER"), getenv("USER"));
 
         system(cmd);
 }
