@@ -8,13 +8,15 @@
 #include <pthread.h>
 #include <time.h>
 #include <sys/select.h>
+#include <fcntl.h>
 
 #include "gbnftp.h" 
 #include "common.h"
 
 
-#define CMD_SIZE 16
+#define CMD_SIZE 128
 #define FOLDER_PATH "/home/tibwere/.gbn-ftp-public/"
+#define TMP_LS_PATH "/home/tibwere/.gbn-ftp-public/.tmp-ls"
 #define START_WORKER_PORT 29290
 
 
@@ -43,7 +45,6 @@ pthread_mutex_t tpool_mutex;
 pthread_cond_t tpool_cond_var;
 unsigned int active_threads;
 
-
 void *recv_worker(void *args);
 void *send_worker(void *args);
 void exit_server(int status);
@@ -60,12 +61,9 @@ void *recv_worker(void * args)
         fd_set read_fds;
         // struct timeval tv;
         int retval;
-        char cmd_to_send[CMD_SIZE];
         gbn_ftp_header_t recv_header;
         char payload[CHUNK_SIZE];
         char err_mess[ERR_SIZE];
-        unsigned int ack_number;
-        bool is_first = true;
 
         memset(err_mess, 0x0, ERR_SIZE);
 
@@ -77,12 +75,12 @@ void *recv_worker(void * args)
                 // tv.tv_usec = conn_info->configs->rto_usec;
 
                 retval = select(winfo[id].socket + 1, &read_fds, NULL, NULL, NULL/*&tv*/);
+
                 if (retval == -1) {
                         snprintf(err_mess, ERR_SIZE, "Unable to get message from %ld-th client (select)", id);
                         perr(err_mess);
                         goto exit_from_receiver_thread;
                 } else if (retval) {
-                        memset(cmd_to_send, 0x0, CMD_SIZE);
                         memset(payload, 0x0, CHUNK_SIZE);
 
                         if (gbn_receive(winfo[id].socket, &recv_header, payload, &winfo[id].client_sockaddr) == -1) {
@@ -93,17 +91,15 @@ void *recv_worker(void * args)
 
                         if(is_ack(recv_header)) {
 
-                                ack_number = strtol(payload, NULL, 10);
-
-                                if (ack_number >= winfo[id].base) {
+                                if (get_sequence_number(recv_header) >= winfo[id].base) {
 
                                         if (pthread_mutex_lock(&winfo[id].mutex)) {
                                                 snprintf(err_mess, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex_%ld)", id);
                                                 perr(err_mess);
                                                 goto exit_from_receiver_thread;
                                         }
-                                        
-                                        winfo[id].base = ack_number + 1;
+
+                                        winfo[id].base = get_sequence_number(recv_header) + 1;
 
                                         if (pthread_mutex_unlock(&winfo[id].mutex)) {
                                                 snprintf(err_mess, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex_%ld)", id);
@@ -117,16 +113,6 @@ void *recv_worker(void * args)
                                                 goto exit_from_receiver_thread;
                                         }
                                 }
-
-                                if (is_first) {
-                                        printf("Worker no. %ld [Client connected: %s:%d]\n", 
-                                                id, 
-                                                inet_ntoa((winfo[id].client_sockaddr).sin_addr), 
-                                                ntohs((winfo[id].client_sockaddr).sin_port));
-
-                                        is_first = false;
-                                }
-
                         } 
 
                 }  else {
@@ -145,6 +131,10 @@ void *send_worker(void *args)
         char err_mess[ERR_SIZE];
         gbn_ftp_header_t header;
         bool is_first = true;
+        bool quit = false;
+        char chunk_read[CHUNK_SIZE];
+        ssize_t size_read;
+        int fd;
 
         memset(err_mess, 0x0, ERR_SIZE);
 
@@ -159,8 +149,7 @@ void *send_worker(void *args)
                 goto exit_from_sender_thread;
         }
 
-        while(true) {
-
+        do {
                 if (pthread_mutex_lock(&winfo[id].mutex)) {
                         snprintf(err_mess, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex_%ld)", id);
                         perr(err_mess);
@@ -175,32 +164,66 @@ void *send_worker(void *args)
                         }
                 }
 
-                if (is_first) {
-                        set_ack(&header, true);
-                        set_sequence_number(&header, 0);
-                        set_message_type(&header, winfo[id].modality);
-                        set_last(&header, false);
-
-                        if (gbn_send(winfo[id].socket, header, NULL, 0, &winfo[id].client_sockaddr, config) == -1) {
-                                snprintf(err_mess, ERR_SIZE, "Unable to send initial ACK for %ld-th connection (SYNACK)", id);
-                                perr(err_mess);
-                                goto exit_from_sender_thread;
-                        }
-
-                        is_first = false;
-                        printf("Mod: %d (base = %d; next_seq_num = %d expected_seq_num = %d)\n", 
-                                winfo[id].modality, winfo[id].base, winfo[id].next_seq_num, winfo[id].expected_seq_num);
-                }
-
-
                 if (pthread_mutex_unlock(&winfo[id].mutex)) {
                         snprintf(err_mess, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex_%ld)", id);
                         perr(err_mess);
                         goto exit_from_sender_thread;
                 }
 
+                if (is_first) {
+                        set_ack(&header, true);
+                        set_sequence_number(&header, 1);
+                        set_message_type(&header, winfo[id].modality);
+                        set_last(&header, false);
+
+                        if (gbn_send(winfo[id].socket, header, NULL, 0, &winfo[id].client_sockaddr, config) == -1) {
+                                snprintf(err_mess, ERR_SIZE, "Unable to send initial ACK for %ld-th connection (ACK)", id);
+                                perr(err_mess);
+                                goto exit_from_sender_thread;
+                        }
+
+                        if ((fd = open(TMP_LS_PATH, O_RDONLY)) == -1) {
+                                snprintf(err_mess, ERR_SIZE, "Unable to open LS tmp file for %ld-th connection", id);
+                                perr(err_mess);
+                                goto exit_from_sender_thread;    
+                        }
+
+                        is_first = false;
+                        printf("Worker no. %ld [Client connected: %s:%d (OP: %d)]\n", 
+                                id, 
+                                inet_ntoa((winfo[id].client_sockaddr).sin_addr), 
+                                ntohs((winfo[id].client_sockaddr).sin_port),
+                                winfo[id].modality);
+
+                } else {
+                        memset(chunk_read, 0x0, CHUNK_SIZE);
+
+                        set_message_type(&header, LIST);
+                        set_sequence_number(&header, winfo[id].next_seq_num++);
+                        set_ack(&header, false);
+                        set_last(&header, false);
+
+                        size_read = pread(fd, chunk_read, CHUNK_SIZE, size_read);
+
+                        if (size_read == -1) {
+                                snprintf(err_mess, ERR_SIZE, "Unable to read from LS tmp file for %ld-th connection", id);
+                                perr(err_mess);
+                                goto exit_from_sender_thread;     
+                        } 
+                        
+                        if (size_read < CHUNK_SIZE) {
+                                set_last(&header, true);
+                                quit = true;
+                        }
+                        
+                        if (gbn_send(winfo[id].socket, header, chunk_read, size_read, &winfo[id].client_sockaddr, config) == -1) {
+                                snprintf(err_mess, ERR_SIZE, "Unable to send initial ACK for %ld-th connection (SYNACK)", id);
+                                perr(err_mess);
+                                goto exit_from_sender_thread;
+                        }
+                }                    
                 
-        }
+        } while(!quit);
 
 exit_from_sender_thread:
         pthread_exit(NULL);
@@ -350,9 +373,9 @@ struct worker_info *init_worker_info(long nmemb)
         for (int i = 0; i < nmemb; ++i) {
                 memset(&wi[i], 0x0, sizeof(struct worker_info));
                 wi[i].socket = -1;
-                wi[i].base = 0;
-                wi[i].next_seq_num = 0;
-                wi[i].expected_seq_num = 0;
+                wi[i].base = 1;
+                wi[i].next_seq_num = 1;
+                wi[i].expected_seq_num = 1;
                 wi[i].port = START_WORKER_PORT + i;
                 wi[i].is_available = true;
                 wi[i].modality = ZERO;
@@ -416,6 +439,16 @@ bool acceptance_loop(int acc_socket, long tpsize, char *error_message)
         return true;
 }
 
+void create_tmp_ls_file(void)
+{
+        char cmd[CMD_SIZE];
+
+        memset(cmd, 0x0, CMD_SIZE);
+        snprintf(cmd, CMD_SIZE, "ls %s > %s", FOLDER_PATH, TMP_LS_PATH);
+
+        system(cmd);
+}
+
 int main(int argc, char **argv)
 {
         int acceptance_sockfd;
@@ -428,6 +461,8 @@ int main(int argc, char **argv)
         srand(time(0));
         concurrenty_connections = sysconf(_SC_NPROCESSORS_ONLN) << 2;
         active_threads = 0;
+
+        create_tmp_ls_file();
 
         if((config = init_configurations()) == NULL) {
                 perr("Unable to load default configurations for server");

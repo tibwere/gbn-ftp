@@ -26,16 +26,14 @@ extern int opterr;
 int sockfd;
 unsigned short int server_port;
 struct gbn_config *config;
-unsigned int base;
-unsigned int next_seq_num;
-unsigned int expected_seq_num;
+
 
 void exit_client(int status);
 enum app_usages parse_cmd(int argc, char **argv, char *address);
 bool set_sockadrr_in(struct sockaddr_in *server_sockaddr, const char *address_string, unsigned short int port, char *error_message);
 int connect_to_server(const char *address_string, enum message_type type, char *error_message);
 void print_info_about_conn(const char* address_string);
-void list(const char *address_string);
+bool list(const char *address_string, char *error_message);
 
 void exit_client(int status) 
 {
@@ -124,7 +122,7 @@ int connect_to_server(const char *address_string, enum message_type type, char *
         int retval;
 
         set_ack(&header, false);
-        set_sequence_number(&header, 0);
+        set_sequence_number(&header, 1);
         set_message_type(&header, type);
         set_last(&header, false);
 
@@ -158,11 +156,11 @@ int connect_to_server(const char *address_string, enum message_type type, char *
                         memset(&server_sockaddr, 0x0, sizeof(struct sockaddr_in));
                         
                         if(gbn_receive(sockfd, &header, NULL, &server_sockaddr) == -1) {
-                                snprintf(error_message, ERR_SIZE, "Unable to receive ACK from server (gbn_select)");
+                                snprintf(error_message, ERR_SIZE, "Unable to receive ACK from server (gbn_receive)");
                                 return -1;
                         }
 
-                        if (!(is_ack(header) && (get_sequence_number(header) == 0))) {
+                        if (!(is_ack(header) && (get_sequence_number(header) == 1))) {
                                 snprintf(error_message, ERR_SIZE, "Comunication protocol broken");
                                 return -1;
                         }
@@ -170,32 +168,65 @@ int connect_to_server(const char *address_string, enum message_type type, char *
                 }  
         }
 
-        close(sockfd);
-
-        if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
-                snprintf(error_message, ERR_SIZE, "Unable to get socket file descriptor (2nd step)");
-                return -1;
-        }
-
 	if (connect(sockfd, (struct sockaddr *) &server_sockaddr, sizeof(struct sockaddr_in)) == -1) {
                 snprintf(error_message, ERR_SIZE, "Connection to server failed");
                 return -1;
-        }
+        }        
 
 	return sockfd;
 }
 
-void list(const char *address_string) 
+bool list(const char *address_string, char *error_message) 
 {
+        unsigned int expected_seq_num = 1;
+        unsigned int last_acked_seq_num = 0;
         char err_mess[ERR_SIZE];
+        char payload[CHUNK_SIZE];
+        gbn_ftp_header_t recv_header;
+        gbn_ftp_header_t send_header;
+        ssize_t recv_size;
+
+        set_ack(&send_header, true);
+        set_message_type(&send_header, LIST);
+        set_last(&send_header, false);
+
+        cls();
+        printf("AVAILABLE FILE ON SERVER\n\n");
 
         if ((sockfd = connect_to_server(address_string, LIST, err_mess)) == -1)
-                exit_client(EXIT_FAILURE);
+                return false;
 
-        printf("Mod: 1 (base = %d; next_seq_num = %d expected_seq_num = %d)\n", base, next_seq_num, expected_seq_num);
-        pause();
+        do {
+                memset(payload, 0x0, CHUNK_SIZE);
+
+                if((recv_size = gbn_receive(sockfd, &recv_header, payload, NULL)) == -1) {
+                        snprintf(error_message, ERR_SIZE, "Unable to receive pkt from server (gbn_receive)");
+                        return false;
+                }
+
+                if (write(STDIN_FILENO, payload, recv_size) == -1) {
+                        snprintf(error_message, ERR_SIZE, "Unable to print out info received from server");
+                        return false;  
+                }
+
+                if(get_sequence_number(recv_header) == expected_seq_num) 
+                        set_sequence_number(&send_header, expected_seq_num);
+                else
+                        set_sequence_number(&send_header, last_acked_seq_num);
+
+                if (gbn_send(sockfd, send_header, NULL, 0, NULL, config) == -1) {
+                        snprintf(error_message, ERR_SIZE, "Unable to send ACK to server");
+                        return false;
+                }
+
+
+        } while(!is_last(recv_header));
+
+        printf("\n\nPress enter key to get back to menu\n");
+        getchar();
 
         close(sockfd);
+        return true;
 }
 
 int main(int argc, char **argv)
@@ -203,14 +234,12 @@ int main(int argc, char **argv)
         char address_string[ADDRESS_STRING_LENGTH];
         enum app_usages modality;
         char choice;
+        char err_mess[ERR_SIZE];
 
         srand(time(0));
 
         memset(address_string, 0x0, ADDRESS_STRING_LENGTH);
-
-        base = 0;
-        next_seq_num = 0;
-        expected_seq_num = 0;
+        memset(err_mess, 0x0, ERR_SIZE);
         
         if((config = init_configurations()) == NULL) {
                 perr("Unable to load default configurations for server");
@@ -250,7 +279,7 @@ int main(int argc, char **argv)
                         abort();        
         }
 
-        while (true) {
+        do {
                 cls();
                 printf("Welcome to GBN-FTP service\n\n");
                 printf("*** What do you wanna do? ***\n\n");
@@ -262,19 +291,22 @@ int main(int argc, char **argv)
                 choice = multi_choice("\nPick an option", "LPGQ", 4);
 
                 switch (choice) {
-                        case 'L': list(address_string); break;
+                        case 'L': 
+                                if (!list(address_string, err_mess)) 
+                                        perr(err_mess);
+                                break;
                         case 'P': 
                         case 'G':
                                 printf("Not implemented yet :c\n");
                                 break;
                         case 'Q': 
-                                printf("Bye bye\n");
+                                printf("Bye bye\n\n");
                                 break;
                         default:
                                 fprintf(stderr, "Invalid condition at %s:%d\n", __FILE__, __LINE__);
                                 abort();
                 }
-        }    
+        } while (choice != 'Q');   
   
         return 0;
 }
