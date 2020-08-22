@@ -15,7 +15,8 @@
 
 
 #define ADDRESS_STRING_LENGTH 1024
-#define CLS system("clear")
+#define cls() system("clear")
+
 
 extern bool verbose;
 extern char *optarg;
@@ -121,10 +122,9 @@ int connect_to_server(const char *address_string, enum message_type type, char *
         fd_set read_fds;
         struct timeval tv;
         int retval;
-        char ack_no[CHUNK_SIZE];
 
         set_ack(&header, false);
-        set_sequence_number(&header, next_seq_num++);
+        set_sequence_number(&header, 0);
         set_message_type(&header, type);
         set_last(&header, false);
 
@@ -135,8 +135,6 @@ int connect_to_server(const char *address_string, enum message_type type, char *
 
         if (!set_sockadrr_in(&server_sockaddr, address_string, server_port, error_message)) 
                 return -1;
-
-        memset(ack_no, 0x0, CHUNK_SIZE);
 
         while (true) {
                 
@@ -159,18 +157,15 @@ int connect_to_server(const char *address_string, enum message_type type, char *
                 if (retval) {
                         memset(&server_sockaddr, 0x0, sizeof(struct sockaddr_in));
                         
-                        if(gbn_receive(sockfd, &header, ack_no, &server_sockaddr) == -1) {
+                        if(gbn_receive(sockfd, &header, NULL, &server_sockaddr) == -1) {
                                 snprintf(error_message, ERR_SIZE, "Unable to receive ACK from server (gbn_select)");
                                 return -1;
                         }
 
-                        if (!is_ack(header)) {
+                        if (!(is_ack(header) && (get_sequence_number(header) == 0))) {
                                 snprintf(error_message, ERR_SIZE, "Comunication protocol broken");
                                 return -1;
                         }
-
-                        ++base;
-
                         break;
                 }  
         }
@@ -196,6 +191,9 @@ void list(const char *address_string)
 
         if ((sockfd = connect_to_server(address_string, LIST, err_mess)) == -1)
                 exit_client(EXIT_FAILURE);
+
+        printf("Mod: 1 (base = %d; next_seq_num = %d expected_seq_num = %d)\n", base, next_seq_num, expected_seq_num);
+        pause();
 
         close(sockfd);
 }
@@ -253,7 +251,7 @@ int main(int argc, char **argv)
         }
 
         while (true) {
-                CLS;
+                cls();
                 printf("Welcome to GBN-FTP service\n\n");
                 printf("*** What do you wanna do? ***\n\n");
                 printf("[L]IST all available files\n");

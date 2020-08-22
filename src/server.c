@@ -23,12 +23,12 @@ struct worker_info {
         unsigned short port;
         bool is_available;
         struct sockaddr_in client_sockaddr;
-        unsigned int base;
-        unsigned int next_seq_num;
-        unsigned int expected_seq_num;
         pthread_mutex_t mutex;
         pthread_cond_t cond_var;
         enum message_type modality;
+        unsigned int base;
+        unsigned int next_seq_num;
+        unsigned int expected_seq_num;
 };
 
 
@@ -177,20 +177,21 @@ void *send_worker(void *args)
 
                 if (is_first) {
                         set_ack(&header, true);
-                        set_sequence_number(&header, winfo[id].next_seq_num++);
+                        set_sequence_number(&header, 0);
                         set_message_type(&header, winfo[id].modality);
                         set_last(&header, false);
 
-                        if (gbn_send(winfo[id].socket, header, "0", 1, &winfo[id].client_sockaddr, config) == -1) {
+                        if (gbn_send(winfo[id].socket, header, NULL, 0, &winfo[id].client_sockaddr, config) == -1) {
                                 snprintf(err_mess, ERR_SIZE, "Unable to send initial ACK for %ld-th connection (SYNACK)", id);
                                 perr(err_mess);
                                 goto exit_from_sender_thread;
                         }
 
                         is_first = false;
+                        printf("Mod: %d (base = %d; next_seq_num = %d expected_seq_num = %d)\n", 
+                                winfo[id].modality, winfo[id].base, winfo[id].next_seq_num, winfo[id].expected_seq_num);
                 }
 
-                winfo[id].next_seq_num ++;
 
                 if (pthread_mutex_unlock(&winfo[id].mutex)) {
                         snprintf(err_mess, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex_%ld)", id);
@@ -198,7 +199,7 @@ void *send_worker(void *args)
                         goto exit_from_sender_thread;
                 }
 
-                printf("Mod: %d (base = %d; next_seq_num = %d)\n", winfo[id].modality, winfo[id].base, winfo[id].next_seq_num);
+                
         }
 
 exit_from_sender_thread:
