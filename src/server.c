@@ -58,7 +58,6 @@ void *recv_worker(void * args)
 {
         long id = (long) args;        
         fd_set read_fds;
-        // struct timeval tv;
         int retval;
         gbn_ftp_header_t recv_header;
         char payload[CHUNK_SIZE];
@@ -70,10 +69,8 @@ void *recv_worker(void * args)
                 
                 FD_ZERO(&read_fds);
                 FD_SET(winfo[id].socket, &read_fds);
-                // tv.tv_sec = 0;
-                // tv.tv_usec = conn_info->configs->rto_usec;
 
-                retval = select(winfo[id].socket + 1, &read_fds, NULL, NULL, NULL/*&tv*/);
+                retval = select(winfo[id].socket + 1, &read_fds, NULL, NULL, NULL);
 
                 if (retval == -1) {
                         snprintf(err_mess, ERR_SIZE, "Unable to get message from %ld-th client (select)", id);
