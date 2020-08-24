@@ -53,9 +53,9 @@ bool acceptance_loop(int acc_socket, long size, char *error_message);
 struct worker_info *init_worker_info(long nmemb);
 bool handle_recv(int id, char *error_message);
 
+
 void *send_worker(void *args)
 {
-        printf("Sono qui nel sender\n");
         long id = (long) args;
         char err_mess[ERR_SIZE];
         bool is_first = true;
@@ -161,7 +161,6 @@ void *send_worker(void *args)
         } while(!quit);
 
 exit_from_sender_thread:
-        printf("Sono entrato qui nella exit\n");
         pthread_exit(NULL);
 }
 
