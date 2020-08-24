@@ -118,9 +118,6 @@ int connect_to_server(const char *address_string, enum message_type type, const 
         int sockfd;
         gbn_ftp_header_t header;
         struct sockaddr_in server_sockaddr;
-        fd_set read_fds;
-        struct timeval tv;
-        int retval;
 
         set_ack(&header, false);
         set_sequence_number(&header, 1);
@@ -137,38 +134,26 @@ int connect_to_server(const char *address_string, enum message_type type, const 
 
 
         while (true) {
-                
-                FD_ZERO(&read_fds);
-                FD_SET(sockfd, &read_fds);
-                tv.tv_sec = 0;
-                tv.tv_usec = config->rto_usec;
 
                 /* SEND CMD */
                 if (gbn_send(sockfd, header, filename, filename_length, &server_sockaddr, config) == -1) {
                         snprintf(error_message, ERR_SIZE, "Unable to send LIST command to server");
                         return -1;
                 }
-        
-                retval = select(sockfd + 1, &read_fds, NULL, NULL, &tv);
 
-                if (retval == -1) {
-                        snprintf(error_message, ERR_SIZE, "Unable to receive ACK from server (select)");
-                        return -1;
-                } 
-                if (retval) {
-                        memset(&server_sockaddr, 0x0, sizeof(struct sockaddr_in));
+                memset(&server_sockaddr, 0x0, sizeof(struct sockaddr_in));
                         
-                        if(gbn_receive(sockfd, &header, NULL, &server_sockaddr) == -1) {
-                                snprintf(error_message, ERR_SIZE, "Unable to receive ACK from server (gbn_receive)");
-                                return -1;
-                        }
+                if(gbn_receive(sockfd, &header, NULL, &server_sockaddr) == -1) {
+                        snprintf(error_message, ERR_SIZE, "Unable to receive ACK from server (gbn_receive)");
+                        return -1;
+                }
 
-                        if (!(is_ack(header) && (get_sequence_number(header) == 1))) {
-                                snprintf(error_message, ERR_SIZE, "Comunication protocol broken");
-                                return -1;
-                        }
-                        break;
-                }  
+                if (!(is_ack(header) && (get_sequence_number(header) == 1))) {
+                        snprintf(error_message, ERR_SIZE, "Comunication protocol broken");
+                        return -1;
+                }
+                        
+                break; 
         }
 
 	if (connect(sockfd, (struct sockaddr *) &server_sockaddr, sizeof(struct sockaddr_in)) == -1) {
