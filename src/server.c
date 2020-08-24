@@ -52,7 +52,6 @@ bool start_workers(long index, struct sockaddr_in *client_sockaddr, enum message
 bool acceptance_loop(int acc_socket, long size, char *error_message);
 struct worker_info *init_worker_info(long nmemb);
 bool handle_recv(int id, char *error_message);
-void create_tmp_ls_file(void); // questo forse posso eliminarlo con lo script di installazione
 
 void *send_worker(void *args)
 {
@@ -428,16 +427,6 @@ bool acceptance_loop(int acc_socket, long tpsize, char *error_message)
         return true;
 }
 
-void create_tmp_ls_file(void)
-{
-        char cmd[CMD_SIZE];
-
-        memset(cmd, 0x0, CMD_SIZE);
-        snprintf(cmd, CMD_SIZE, "ls /home/%s/.gbn-ftp-public/ > /home/%s/.gbn-ftp-public/.tmp-ls", getenv("USER"), getenv("USER"));
-
-        system(cmd);
-}
-
 int main(int argc, char **argv)
 {
         int acceptance_sockfd;
@@ -449,8 +438,6 @@ int main(int argc, char **argv)
         memset(err_mess, 0x0, ERR_SIZE);
         srand(time(0));
         concurrenty_connections = sysconf(_SC_NPROCESSORS_ONLN) << 2;
-
-        create_tmp_ls_file();
 
         if((config = init_configurations()) == NULL) {
                 perr("Unable to load default configurations for server");
