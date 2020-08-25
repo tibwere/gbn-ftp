@@ -271,6 +271,8 @@ bool list(const char *address_string, char *error_message)
                         return false;  
                 }
 
+                printf("Ricevuto SEQNO: %d (LAST = %d)\n", get_sequence_number(recv_header), is_last(recv_header));
+
                 if(get_sequence_number(recv_header) == expected_seq_num) 
                         set_sequence_number(&send_header, expected_seq_num++);
                 else
@@ -280,12 +282,12 @@ bool list(const char *address_string, char *error_message)
                         set_last(&send_header, true);
                 }
 
-                set_sequence_number(&send_header, 0);
-
                 if (gbn_send(sockfd, send_header, NULL, 0, NULL, config) == -1) {
                         snprintf(error_message, ERR_SIZE, "Unable to send ACK to server");
                         return false;
                 }
+
+                printf("Inviato ACK %d (LAST %d)\n", get_sequence_number(send_header), is_last(send_header));
 
         } while(!is_last(recv_header));
 

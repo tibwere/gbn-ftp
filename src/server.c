@@ -10,6 +10,7 @@
 #include <sys/select.h>
 #include <sys/time.h>
 #include <fcntl.h>
+#include <math.h>
 
 #include "gbnftp.h" 
 #include "common.h"
@@ -34,6 +35,7 @@ struct worker_info {
         unsigned int last_acked_seq_num;
         struct timeval start_timer;
         struct gbn_config cfg;
+        pthread_t tid;
 };
 
 
@@ -42,6 +44,7 @@ extern char *optarg;
 extern int opterr;
 
 
+volatile int *quit_conditions;
 unsigned short int acceptance_port;
 struct worker_info *winfo;
 struct gbn_config *config;
@@ -53,57 +56,65 @@ void exit_server(int status);
 enum app_usages parse_cmd(int argc, char **argv, long *tpsize_ptr);
 int init_socket(unsigned short int port, char *error_message);
 long get_available_worker(long nmemb);
-bool start_workers(long index, struct sockaddr_in *client_sockaddr, enum message_type modality, const char *payload, char *error_message);
+bool start_sender(long index, struct sockaddr_in *client_sockaddr, enum message_type modality, const char *payload, char *error_message);
 bool acceptance_loop(int acc_socket, long size, char *error_message);
 bool init_worker_info(long nmemb, char *error_message); 
 bool handle_recv(int id, char *error_message);
 int handle_first_message(long id, char *error_message);
-short int send_file_chunk(long id, int fd, char *error_message);
+ssize_t send_file_chunk(long id, int fd, char *error_message);
 bool reset_worker_info(int id, bool need_destroy, char *error_message);
+void set_timeout(long index, struct timespec *ts);
+void handle_retransmition(long index, int fd, char *error_message);
 
-short int send_file_chunk(long id, int filedesc, char *error_message)
+ssize_t send_file_chunk(long id, int filedesc, char *error_message)
 {
         gbn_ftp_header_t header;
         char buff[CHUNK_SIZE];
         ssize_t rsize;
-        int retval = 1;
+        ssize_t wsize;
 
         memset(buff, 0x0, CHUNK_SIZE);
-
-        set_message_type(&header, winfo[id].modality);
-        set_sequence_number(&header, winfo[id].next_seq_num++);
-        set_ack(&header, false);        
-        set_last(&header, false);
 
         if ((rsize = read(filedesc, buff, CHUNK_SIZE)) == -1) {
                 snprintf(error_message, ERR_SIZE, "Unable to read from selected file for %ld-th connection", id);
                 return -1;                
         }
-        
-        if (rsize < CHUNK_SIZE) {
-                set_last(&header, true);
-                retval = 0;
-        }
-        
-        if (gbn_send(winfo[id].socket, header, buff, rsize, &winfo[id].client_sockaddr, &winfo[id].cfg) == -1) {
-                snprintf(error_message, ERR_SIZE, "Unable to send chunk to client for %ld-th connection", id);
-                return -1;
-        }
 
-        if (pthread_mutex_lock(&winfo[id].mutex)) {
-                snprintf(error_message, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex_%ld)", id);
-                return -1;
-        }
+        if (rsize > 0) {
 
-        if (winfo[id].base == winfo[id].next_seq_num) 
-                gettimeofday(&winfo[id].start_timer, NULL);
-        
-        if (pthread_mutex_unlock(&winfo[id].mutex)) {
-                snprintf(error_message, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex_%ld)", id);
-                return -1;
-        }   
+                set_message_type(&header, winfo[id].modality);
+                set_sequence_number(&header, winfo[id].next_seq_num++);
+                set_ack(&header, false);        
+                
+                if (rsize < CHUNK_SIZE) 
+                        set_last(&header, true);
+                else
+                        set_last(&header, false);
 
-        return retval;    
+                if ((wsize = gbn_send(winfo[id].socket, header, buff, rsize, &winfo[id].client_sockaddr, &winfo[id].cfg)) == -1) {
+                        snprintf(error_message, ERR_SIZE, "Unable to send chunk to client for %ld-th connection", id);
+                        return -1;
+                }
+
+                printf("Inviato un segmento [base = %d - nextseqnum = %d dim = %ld]\n", winfo[id].base, winfo[id].next_seq_num, wsize);
+
+                if (pthread_mutex_lock(&winfo[id].mutex)) {
+                        snprintf(error_message, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex_%ld)", id);
+                        return -1;
+                }
+
+                if (winfo[id].base == winfo[id].next_seq_num) 
+                        gettimeofday(&winfo[id].start_timer, NULL);
+                
+                if (pthread_mutex_unlock(&winfo[id].mutex)) {
+                        snprintf(error_message, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex_%ld)", id);
+                        return -1;
+                }
+
+                return wsize; 
+        }  
+
+        return 0;    
 }
 
 int handle_first_message(long id, char *error_message) 
@@ -144,20 +155,54 @@ int handle_first_message(long id, char *error_message)
         return fd;
 }
 
+void set_timeout(long index, struct timespec *ts)
+{
+        ts->tv_sec = floor((double) winfo[index].cfg.rto_usec / (double) 1000000);
+        ts->tv_nsec = (winfo[index].cfg.rto_usec % 1000000) * 1000;
+}
+
+void handle_retransmition(long index, int fd, char *error_message)
+{
+        //printf("Timer scaduto\n");
+        lseek(fd, (winfo[index].base - 1) * CHUNK_SIZE, SEEK_SET);
+        winfo[index].next_seq_num = winfo[index].base;
+
+        for (unsigned int i = winfo[index].base; i < winfo[index].next_seq_num; ++i) {
+                printf("base: %d - next_seq_num: %d\n", winfo[index].base, winfo[index].next_seq_num);
+                send_file_chunk(index, fd, error_message);
+        }
+}
+
 void *send_worker(void *args)
 {
         long id = (long) args;
         char err_mess[ERR_SIZE];
-        short int has_next;
-        int fd = -1;
+        int fd;
         struct timeval now;
+        ssize_t last_write_size;
+
+        struct timespec ts;
 
         memset(err_mess, 0x0, ERR_SIZE);
 
-        do {
+        if ((fd = handle_first_message(id, err_mess)) == -1) {
+                perr(err_mess);
+                goto exit_from_sender_thread;
+        }
+
+        gettimeofday(&winfo[id].start_timer, NULL);
+
+        printf("Worker no. %ld [Client connected: %s:%d (OP: %d)]\n", 
+                id, 
+                inet_ntoa((winfo[id].client_sockaddr).sin_addr), 
+                ntohs((winfo[id].client_sockaddr).sin_port),
+                winfo[id].modality);
+
+        while (quit_conditions[id] == 0) {
+
                 gettimeofday(&now, NULL);
                 if (elapsed_usec(&winfo[id].start_timer, &now) >= winfo[id].cfg.rto_usec) 
-                        printf("Timer scaduto\n");
+                        handle_retransmition(id, fd, err_mess);
 
                 if (pthread_mutex_lock(&winfo[id].mutex)) {
                         snprintf(err_mess, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex_%ld)", id);
@@ -166,11 +211,17 @@ void *send_worker(void *args)
                 }
 
                 while(winfo[id].next_seq_num >= winfo[id].base + winfo[id].cfg.N) {
-                        if (pthread_cond_wait(&winfo[id].cond_var, &winfo[id].mutex)) {
+
+                        set_timeout(id, &ts); 
+                        
+                        if (pthread_cond_timedwait(&winfo[id].cond_var, &winfo[id].mutex, &ts)) {
                                 snprintf(err_mess, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_condvar_%ld)", id);
                                 perr(err_mess);
                                 goto exit_from_sender_thread;
                         }
+
+                        if (winfo[id].next_seq_num >= winfo[id].base + winfo[id].cfg.N)
+                                handle_retransmition(id, fd, err_mess);
                 }
 
                 if (pthread_mutex_unlock(&winfo[id].mutex)) {
@@ -179,29 +230,12 @@ void *send_worker(void *args)
                         goto exit_from_sender_thread;
                 }
 
-                if (fd == -1) {
-
-                        if ((fd = handle_first_message(id, err_mess)) == -1) {
-                                perr(err_mess);
-                                goto exit_from_sender_thread;
-                        }
-
-                        printf("Worker no. %ld [Client connected: %s:%d (OP: %d)]\n", 
-                                id, 
-                                inet_ntoa((winfo[id].client_sockaddr).sin_addr), 
-                                ntohs((winfo[id].client_sockaddr).sin_port),
-                                winfo[id].modality);
-
-                } else {
-
-                        if ((has_next = send_file_chunk(id, fd, err_mess)) == -1) {
-                                perr(err_mess);
-                                goto exit_from_sender_thread;
-                        }
-
-                }                    
+                if ((last_write_size = send_file_chunk(id, fd, err_mess)) == -1) {
+                        perr(err_mess);
+                        goto exit_from_sender_thread;
+                }                 
                 
-        } while(has_next);
+        }
 
 exit_from_sender_thread:
         printf("Sender %ld is quitting right now\n", id);
@@ -317,10 +351,8 @@ long get_available_worker(long nmemb)
         return -1;
 }
 
-bool start_workers(long index, struct sockaddr_in *client_sockaddr, enum message_type modality, const char *payload, char *error_message)
+bool start_sender(long index, struct sockaddr_in *client_sockaddr, enum message_type modality, const char *payload, char *error_message)
 {
-        pthread_t tid;
-
         memcpy(&winfo[index].client_sockaddr, client_sockaddr, sizeof(struct sockaddr_in));
 
         winfo[index].modality = modality;
@@ -329,7 +361,7 @@ bool start_workers(long index, struct sockaddr_in *client_sockaddr, enum message
         if ((winfo[index].socket = init_socket(winfo[index].port, error_message)) == -1) 
                 return false;
 
-        if (pthread_create(&tid, NULL, send_worker, (void *) index)) {
+        if (pthread_create(&winfo[index].tid, NULL, send_worker, (void *) index)) {
                 snprintf(error_message, ERR_SIZE, "Unable to spawn worker threads for %ld-th client", index);
                 return false;  
         }
@@ -355,7 +387,7 @@ bool reset_worker_info(int id, bool need_destroy, char *error_message)
                 snprintf(error_message, ERR_SIZE, "Unable to init metadata used by syncronization protocol for %d-th connection", id);
                 return false;
         }
-        
+
         if (pthread_cond_init(&winfo[id].cond_var, NULL)) {
                 snprintf(error_message, ERR_SIZE, "Unable to init metadata used by syncronization protocol for %d-th connection", id);
                 return false;
@@ -410,6 +442,8 @@ bool handle_recv(int id, char *error_message)
 
         if(is_ack(recv_header)) {
 
+                printf("Ricevuto ACK %d\n", get_sequence_number(recv_header));
+
                 if (get_sequence_number(recv_header) >= winfo[id].base) {
 
                         if (pthread_mutex_lock(&winfo[id].mutex)) {
@@ -432,8 +466,13 @@ bool handle_recv(int id, char *error_message)
 
                 if (is_last(recv_header)) {
                         FD_CLR(winfo[id].socket, &all_fds);
+                        quit_conditions[id] = 1;
+                        
+                        pthread_join(winfo[id].tid, NULL);
                         if (!reset_worker_info(id, true, error_message))
                                 return false;
+
+                        
                         printf("Comunication with %d-th client has expired\n", id);
                 }
         }
@@ -475,7 +514,7 @@ bool acceptance_loop(int acc_socket, long tpsize, char *error_message)
                                 return false;
                         }
 
-                        if (!start_workers(winfo_index, &addr, get_message_type(header), payload, error_message))
+                        if (!start_sender(winfo_index, &addr, get_message_type(header), payload, error_message))
                                 return false;
 
                         FD_SET(winfo[winfo_index].socket, &all_fds);
@@ -542,6 +581,14 @@ int main(int argc, char **argv)
                 perr(err_mess);
                 exit_server(EXIT_FAILURE);
         }  
+
+        if ((quit_conditions = calloc(concurrenty_connections, sizeof(int))) == NULL) {
+                perr("Unable to init metadata for syncronization protocol");
+                exit_server(EXIT_FAILURE);
+        }
+
+        for (int i = 0; i < concurrenty_connections; ++i)
+                quit_conditions[i] = 0;
 
         acceptance_port = DEFAULT_PORT;
         modality = parse_cmd(argc, argv, &concurrenty_connections);

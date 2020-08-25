@@ -105,6 +105,6 @@ unsigned long elapsed_usec(const struct timeval *start, const struct timeval *st
 
         sec = stop->tv_sec - start->tv_sec;
         usec = stop->tv_usec - start->tv_usec;
-        
+
         return sec * 1000000 + usec; 
 }

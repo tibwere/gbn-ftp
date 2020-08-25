@@ -118,7 +118,8 @@ ssize_t gbn_send(int socket, gbn_ftp_header_t header, const void *payload, size_
                 return -1;
 
         // una volta implementato il timer rimuovere l'or true
-        if (rand_double() > configs->probability || true) {
+        if (rand_double() > configs->probability/* || true*/) {
+                printf("Pacchetto realmente inviato\n");
                 if (sockaddr_in)
                         send_size = sendto(socket, message, length, MSG_NOSIGNAL, (struct sockaddr *) sockaddr_in, sizeof(struct sockaddr_in));
                 else
@@ -128,6 +129,7 @@ ssize_t gbn_send(int socket, gbn_ftp_header_t header, const void *payload, size_
                 return send_size;
                         
         } else {
+                printf("Pacchetto non inviato\n");
                 return 0;
         }
 }
@@ -150,27 +152,3 @@ ssize_t gbn_receive(int socket, gbn_ftp_header_t *header, char *payload, const s
 
         return received_size;
 }
-
-/*
-bool is_syn_pkt(gbn_ftp_header_t header)
-{
-        return is_conn(header) && (get_sequence_number(header) == 0);
-}
-
-bool is_synack_pkt(gbn_ftp_header_t header, const char *payload) 
-{
-        return is_conn(header) && (get_sequence_number(header) == 0) && (strncmp(payload, "0", 1) == 0) && get_message_type(header) == ACK_OR_RESP;
-
-}
-
-bool is_ack_pkt(gbn_ftp_header_t header, const char *payload, unsigned int *ack_no_ptr)
-{
-        bool result = (get_message_type(header) == ACK_OR_RESP);
-
-        if (result)
-                *ack_no_ptr = strtol(payload, NULL, 10);
-        
-        return result;
-}
-*/
-
