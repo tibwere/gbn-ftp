@@ -97,3 +97,14 @@ double rand_double(void)
 {
         return (double) rand() / (double) RAND_MAX;
 }
+
+unsigned long elapsed_usec(const struct timeval *start, const struct timeval *stop)
+{
+        unsigned long sec;
+        unsigned long usec;
+
+        sec = stop->tv_sec - start->tv_sec;
+        usec = stop->tv_usec - start->tv_usec;
+        
+        return sec * 1000000 + usec; 
+}

@@ -17,5 +17,6 @@ size_t get_input(unsigned int length, char *string, bool not_null);
 char multi_choice(const char *question, const char *choices, int no_choices);
 struct gbn_config *init_configurations(void); 
 double rand_double(void);
+unsigned long elapsed_usec(const struct timeval *start, const struct timeval *stop);
 
 #endif

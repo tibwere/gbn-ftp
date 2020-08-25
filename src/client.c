@@ -53,7 +53,8 @@ enum app_usages parse_cmd(int argc, char **argv, char *address)
                 {"address",     required_argument,      0, 'a'},
                 {"port",        required_argument,      0, 'p'},
                 {"wndsize",     required_argument,      0, 'N'},
-                {"rto",         required_argument,      0, 't'},
+                {"rtosec",      required_argument,      0, 's'},
+                {"rtousec",     required_argument,      0, 'u'},
                 {"adaptive",    no_argument,            0, 'A'},
                 {"prob",        required_argument,      0, 'P'},
                 {"help",        no_argument,            0, 'h'},
@@ -279,6 +280,8 @@ bool list(const char *address_string, char *error_message)
                         set_last(&send_header, true);
                 }
 
+                set_sequence_number(&send_header, 0);
+
                 if (gbn_send(sockfd, send_header, NULL, 0, NULL, config) == -1) {
                         snprintf(error_message, ERR_SIZE, "Unable to send ACK to server");
                         return false;
@@ -341,10 +344,10 @@ int main(int argc, char **argv)
                         printf("\t\t-a [--address]\t<address>\tserver address (IPv4) {REQUIRED}\n");
                         printf("\t\t-p [--port]\t<port>\t\tserver port\n");
                         printf("\t\t-N [--wndsize]\t<size>\t\tWindow size (for GBN)\n");
-                        printf("\t\t-t [--rto]\t<timeout>\tRetransmition timeout (for GBN)\n");
+                        printf("\t\t-t [--rtousec]\t<timeout>\tRetransmition timeout [usec] (for GBN)\n");
                         printf("\t\t-A [--adaptive]\t\t\tTimer adaptative\n");
                         printf("\t\t-P [--prob]\t<percentage>\tLoss probability (from 0 to 1)\n");
-                        printf("\t\t-h [--version]\t\t\tVersion of gbn-ftp-client\n");
+                        printf("\t\t-v [--version]\t\t\tVersion of gbn-ftp-client\n");
                         printf("\t\t-V [--verbose]\t\t\tPrint verbose version of error\n");
                         exit_client(EXIT_SUCCESS);
                         break;
