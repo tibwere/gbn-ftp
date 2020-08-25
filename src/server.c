@@ -51,20 +51,22 @@ struct gbn_config *config;
 fd_set all_fds;
 
 
+ssize_t send_file_chunk(long id, int fd, char *error_message);
+int handle_first_message(long id, char *error_message);
+void set_timeout(long index, struct timespec *ts);
+void handle_retransmition(long index, int fd, char *error_message);
 void *send_worker(void *args);
 void exit_server(int status);
 enum app_usages parse_cmd(int argc, char **argv, long *tpsize_ptr);
 int init_socket(unsigned short int port, char *error_message);
 long get_available_worker(long nmemb);
 bool start_sender(long index, struct sockaddr_in *client_sockaddr, enum message_type modality, const char *payload, char *error_message);
-bool acceptance_loop(int acc_socket, long size, char *error_message);
-bool init_worker_info(long nmemb, char *error_message); 
-bool handle_recv(int id, char *error_message);
-int handle_first_message(long id, char *error_message);
-ssize_t send_file_chunk(long id, int fd, char *error_message);
 bool reset_worker_info(int id, bool need_destroy, char *error_message);
-void set_timeout(long index, struct timespec *ts);
-void handle_retransmition(long index, int fd, char *error_message);
+bool init_worker_info(long nmemb, char *error_message);
+bool handle_recv(int id, char *error_message);
+bool acceptance_loop(int acc_socket, long size, char *error_message);
+bool check_installation(void); 
+
 
 ssize_t send_file_chunk(long id, int filedesc, char *error_message)
 {

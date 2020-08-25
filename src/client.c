@@ -17,7 +17,7 @@
 
 
 #define ADDRESS_STRING_LENGTH 1024
-#define cls() system("clear")
+#define cls() printf("\033[2J\033[H")
 
 extern bool verbose;
 extern char *optarg;
@@ -33,9 +33,10 @@ void exit_client(int status);
 enum app_usages parse_cmd(int argc, char **argv, char *address);
 bool set_sockadrr_in(struct sockaddr_in *server_sockaddr, const char *address_string, unsigned short int port, char *error_message);
 int connect_to_server(const char *address_string, enum message_type type, const char *filename, size_t filename_length, char *error_message);
-void print_info_about_conn(const char* address_string);
+bool get_file(const char *address_string, char *error_message);
 bool list(const char *address_string, char *error_message);
 bool check_installation(void);
+
 
 void exit_client(int status) 
 {
