@@ -35,6 +35,7 @@ bool set_sockadrr_in(struct sockaddr_in *server_sockaddr, const char *address_st
 int connect_to_server(const char *address_string, enum message_type type, const char *filename, size_t filename_length, char *error_message);
 void print_info_about_conn(const char* address_string);
 bool list(const char *address_string, char *error_message);
+bool check_installation(void);
 
 void exit_client(int status) 
 {
@@ -176,6 +177,8 @@ bool get_file(const char *address_string, char *error_message)
         char full_path[2 * CHUNK_SIZE];
         int fd;
 
+        size_t header_size = sizeof(gbn_ftp_header_t);
+
         memset(full_path, 0x0, 2 * CHUNK_SIZE);
         memset(filename, 0x0, CHUNK_SIZE);
 
@@ -207,21 +210,24 @@ bool get_file(const char *address_string, char *error_message)
                         return false;
                 }
 
-                if (write(fd, payload, recv_size) == -1) {
+                if (write(fd, payload, recv_size - header_size) == -1) {
                         snprintf(error_message, ERR_SIZE, "Unable to print out info received from server");
                         return false;  
                 }
 
                 if(get_sequence_number(recv_header) == expected_seq_num) 
-                        set_sequence_number(&send_header, expected_seq_num);
+                        set_sequence_number(&send_header, expected_seq_num++);
                 else
                         set_sequence_number(&send_header, last_acked_seq_num);
+                
+                if (is_last(recv_header))  {
+                        set_last(&send_header, true);
+                } 
 
                 if (gbn_send(sockfd, send_header, NULL, 0, NULL, config) == -1) {
                         snprintf(error_message, ERR_SIZE, "Unable to send ACK to server");
                         return false;
                 }
-
 
         } while(!is_last(recv_header));
 
@@ -265,15 +271,18 @@ bool list(const char *address_string, char *error_message)
                 }
 
                 if(get_sequence_number(recv_header) == expected_seq_num) 
-                        set_sequence_number(&send_header, expected_seq_num);
+                        set_sequence_number(&send_header, expected_seq_num++);
                 else
                         set_sequence_number(&send_header, last_acked_seq_num);
+
+                if (is_last(recv_header))  {
+                        set_last(&send_header, true);
+                }
 
                 if (gbn_send(sockfd, send_header, NULL, 0, NULL, config) == -1) {
                         snprintf(error_message, ERR_SIZE, "Unable to send ACK to server");
                         return false;
                 }
-
 
         } while(!is_last(recv_header));
 
@@ -284,12 +293,30 @@ bool list(const char *address_string, char *error_message)
         return true;
 }
 
+bool check_installation(void) 
+{
+        char path[512];
+
+        memset(path, 0x0, 512);
+        snprintf(path, 512, "/home/%s/.gbn-ftp-download", getenv("USER"));
+        
+        if (access(path, F_OK) != -1)
+                return true;
+        else   
+                return false;
+}
+
 int main(int argc, char **argv)
 {
         char address_string[ADDRESS_STRING_LENGTH];
         enum app_usages modality;
         char choice;
         char err_mess[ERR_SIZE];
+
+        if (!check_installation()) {
+                fprintf(stderr, "Client not installed yet!\n\nlease run the following command:\n\tsh /path/to/script/install-client.sh\n");
+                exit_client(EXIT_FAILURE);
+        }
 
         srand(time(0));
 

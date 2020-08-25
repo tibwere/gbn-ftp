@@ -41,6 +41,7 @@ extern int opterr;
 
 struct worker_info *winfo;
 struct gbn_config *config;
+fd_set all_fds;
 
 
 void *send_worker(void *args);
@@ -135,7 +136,7 @@ void *send_worker(void *args)
 
                         set_message_type(&header, winfo[id].modality);
                         set_sequence_number(&header, winfo[id].next_seq_num++);
-                        set_ack(&header, false);
+                        set_ack(&header, false);        
                         set_last(&header, false);
 
                         size_read = read(fd, chunk_read, CHUNK_SIZE);
@@ -161,6 +162,7 @@ void *send_worker(void *args)
         } while(!quit);
 
 exit_from_sender_thread:
+        printf("Sender %ld is quitting right now\n", id);
         pthread_exit(NULL);
 }
 
@@ -230,7 +232,6 @@ int init_socket(unsigned short int port, char *error_message)
 {
         int fd;
         struct sockaddr_in addr;
-        int enable_option = 1;
 
         memset(&addr, 0x0, sizeof(addr));
 
@@ -239,16 +240,11 @@ int init_socket(unsigned short int port, char *error_message)
                 return -1;
         }
 
-        if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &enable_option, sizeof(int))) {
-                snprintf(error_message, ERR_SIZE, "Unable to change options on socket just opened");
-                return -1;
-        }
-
         addr.sin_family = AF_INET;
 	addr.sin_addr.s_addr = htonl(INADDR_ANY);
 	addr.sin_port = htons(port);
         
-        if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
                 snprintf(error_message, ERR_SIZE, "Unable to bind address to socket");
                 return -1;
         }
@@ -358,6 +354,11 @@ bool handle_recv(int id, char *error_message)
                                 return false;
                         }
                 }
+
+                if (is_last(recv_header)) {
+                        FD_CLR(winfo[id].socket, &all_fds);
+                        printf("Comunication with %d-th client has expired\n", id);
+                }
         }
 
         return true;
@@ -370,14 +371,13 @@ bool acceptance_loop(int acc_socket, long tpsize, char *error_message)
         struct sockaddr_in addr;
         gbn_ftp_header_t header;
         char payload[CHUNK_SIZE];
-        fd_set all_fds, read_fds;
+        fd_set read_fds;
 
         FD_ZERO(&all_fds);
         FD_SET(acc_socket, &all_fds);
         maxfd = acc_socket;
 
         while(true) {
-
                 read_fds = all_fds;
                 memset(&addr, 0x0, sizeof(struct sockaddr_in));
                 memset(payload, 0x0, CHUNK_SIZE);
@@ -412,18 +412,33 @@ bool acceptance_loop(int acc_socket, long tpsize, char *error_message)
                 }  
 
                 for (int i = 0; (i < tpsize) && (ready_fds > 0); ++i) {
+
                         if (winfo[i].socket != -1) {
                                 if (FD_ISSET(winfo[i].socket, &read_fds)) {
                                         if (!handle_recv(i, error_message))
                                                 return false;
-                                }
 
-                                --ready_fds;
+                                        --ready_fds;
+                                }
                         }
                 }
+
         }
 
         return true;
+}
+
+bool check_installation(void) 
+{
+        char path[512];
+
+        memset(path, 0x0, 512);
+        snprintf(path, 512, "/home/%s/.gbn-ftp-public/.tmp-ls", getenv("USER"));
+        
+        if (access(path, F_OK) != -1)
+                return true;
+        else   
+                return false;
 }
 
 int main(int argc, char **argv)
@@ -433,6 +448,11 @@ int main(int argc, char **argv)
         enum app_usages modality;
         long concurrenty_connections;
         char err_mess[ERR_SIZE];
+
+        if (!check_installation()) {
+                fprintf(stderr, "Server not installed yet!\n\nPlease run the following command:\n\tsh /path/to/script/install-server.sh\n");
+                exit_server(EXIT_FAILURE);
+        }
 
         memset(err_mess, 0x0, ERR_SIZE);
         srand(time(0));
