@@ -295,10 +295,10 @@ bool list(const char *address_string, char *error_message)
 
 bool check_installation(void) 
 {
-        char path[512];
+        char path[PATH_SIZE];
 
-        memset(path, 0x0, 512);
-        snprintf(path, 512, "/home/%s/.gbn-ftp-download", getenv("USER"));
+        memset(path, 0x0, PATH_SIZE);
+        snprintf(path, PATH_SIZE, "/home/%s/.gbn-ftp-download", getenv("USER"));
         
         if (access(path, F_OK) != -1)
                 return true;
@@ -314,7 +314,7 @@ int main(int argc, char **argv)
         char err_mess[ERR_SIZE];
 
         if (!check_installation()) {
-                fprintf(stderr, "Client not installed yet!\n\nlease run the following command:\n\tsh /path/to/script/install-client.sh\n");
+                fprintf(stderr, "Client not installed yet!\n\nPlease run the following command:\n\tsh /path/to/script/install-client.sh\n");
                 exit_client(EXIT_FAILURE);
         }
 

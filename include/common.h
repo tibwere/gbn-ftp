@@ -2,6 +2,7 @@
 #define COMMON_H
 
 #define ERR_SIZE 256
+#define PATH_SIZE 1024
 #define perr(mess) detailed_perror(mess, __FILE__, __LINE__)
 
 enum app_usages {

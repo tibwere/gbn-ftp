@@ -42,30 +42,98 @@ extern int opterr;
 struct worker_info *winfo;
 struct gbn_config *config;
 fd_set all_fds;
+unsigned short int acceptance_port;
 
 
 void *send_worker(void *args);
 void exit_server(int status);
-enum app_usages parse_cmd(int argc, char **argv, long *tpsize_ptr, unsigned short int *port);
+enum app_usages parse_cmd(int argc, char **argv, long *tpsize_ptr);
 int init_socket(unsigned short int port, char *error_message);
 long get_available_worker(long nmemb);
 bool start_workers(long index, struct sockaddr_in *client_sockaddr, enum message_type modality, const char *payload, char *error_message);
 bool acceptance_loop(int acc_socket, long size, char *error_message);
 struct worker_info *init_worker_info(long nmemb);
 bool handle_recv(int id, char *error_message);
+int handle_first_message(long id, char *error_message);
+short int send_file_chunk(long id, int fd, char *error_message);
 
+
+short int send_file_chunk(long id, int filedesc, char *error_message)
+{
+        gbn_ftp_header_t header;
+        char buff[CHUNK_SIZE];
+        ssize_t rsize;
+        int retval = 1;
+
+        memset(buff, 0x0, CHUNK_SIZE);
+
+        set_message_type(&header, winfo[id].modality);
+        set_sequence_number(&header, winfo[id].next_seq_num++);
+        set_ack(&header, false);        
+        set_last(&header, false);
+
+        if ((rsize = read(filedesc, buff, CHUNK_SIZE)) == -1) {
+                snprintf(error_message, ERR_SIZE, "Unable to read from selected file for %ld-th connection", id);
+                return -1;                
+        }
+        
+        if (rsize < CHUNK_SIZE) {
+                set_last(&header, true);
+                retval = 0;
+        }
+        
+        if (gbn_send(winfo[id].socket, header, buff, rsize, &winfo[id].client_sockaddr, config) == -1) {
+                snprintf(error_message, ERR_SIZE, "Unable to send chunk to client for %ld-th connection", id);
+                return -1;
+        }    
+
+        return retval;    
+}
+
+int handle_first_message(long id, char *error_message) 
+{
+        int fd;
+        char filename[PATH_SIZE];
+        gbn_ftp_header_t header;
+
+        set_ack(&header, true);
+        set_sequence_number(&header, 1);
+        set_message_type(&header, winfo[id].modality);
+        set_last(&header, false);
+
+        if (gbn_send(winfo[id].socket, header, NULL, 0, &winfo[id].client_sockaddr, config) == -1) {
+                snprintf(error_message, ERR_SIZE, "Unable to send initial ACK for %ld-th connection (ACK)", id);
+                return -1;
+        }
+
+        memset(filename, 0x0, PATH_SIZE);
+
+        if (winfo[id].modality == LIST) {
+                snprintf(filename, PATH_SIZE, "/home/%s/.gbn-ftp-public/.tmp-ls", getenv("USER"));
+                if ((fd = open(filename, O_RDONLY)) == -1) {
+                        snprintf(error_message, ERR_SIZE, "Unable to open LS tmp file for %ld-th connection", id);
+                        return -1;    
+                }
+        }
+
+        if (winfo[id].modality == GET) {
+
+                snprintf(filename, PATH_SIZE, "/home/%s/.gbn-ftp-public/%s", getenv("USER"), winfo[id].filename);
+                if ((fd = open(filename, O_RDONLY)) == -1) {
+                        snprintf(error_message, ERR_SIZE, "Unable to retrive requested file for %ld-th connection", id);
+                        return -1;
+                }
+        }
+
+        return fd;
+}
 
 void *send_worker(void *args)
 {
         long id = (long) args;
         char err_mess[ERR_SIZE];
-        bool is_first = true;
-        bool quit = false;
-        gbn_ftp_header_t header;
-        char chunk_read[CHUNK_SIZE];
-        ssize_t size_read;
-        int fd;
-        char filename[2 * CHUNK_SIZE];
+        short int has_next;
+        int fd = -1;
 
         memset(err_mess, 0x0, ERR_SIZE);
 
@@ -90,41 +158,13 @@ void *send_worker(void *args)
                         goto exit_from_sender_thread;
                 }
 
-                if (is_first) {
-                        set_ack(&header, true);
-                        set_sequence_number(&header, 1);
-                        set_message_type(&header, winfo[id].modality);
-                        set_last(&header, false);
+                if (fd == -1) {
 
-                        if (gbn_send(winfo[id].socket, header, NULL, 0, &winfo[id].client_sockaddr, config) == -1) {
-                                snprintf(err_mess, ERR_SIZE, "Unable to send initial ACK for %ld-th connection (ACK)", id);
+                        if ((fd = handle_first_message(id, err_mess)) == -1) {
                                 perr(err_mess);
                                 goto exit_from_sender_thread;
                         }
 
-                        memset(filename, 0x0, 2 * CHUNK_SIZE);
-
-                        if (winfo[id].modality == LIST) {
-                                snprintf(filename, 2 * CHUNK_SIZE, "/home/%s/.gbn-ftp-public/.tmp-ls", getenv("USER"));
-                                if ((fd = open(filename, O_RDONLY)) == -1) {
-                                        snprintf(err_mess, ERR_SIZE, "Unable to open LS tmp file for %ld-th connection", id);
-                                        perr(err_mess);
-                                        goto exit_from_sender_thread;    
-                                }
-                        }
-
-                        if (winfo[id].modality == GET) {
-
-                                snprintf(filename, 2 * CHUNK_SIZE, "/home/%s/.gbn-ftp-public/%s", getenv("USER"), winfo[id].filename);
-                                if ((fd = open(filename, O_RDONLY)) == -1) {
-                                        snprintf(err_mess, ERR_SIZE, "Unable to retrive requested file for %ld-th connection", id);
-                                        perr(err_mess);
-                                        goto exit_from_sender_thread;
-                                }
-                        }
-
-
-                        is_first = false;
                         printf("Worker no. %ld [Client connected: %s:%d (OP: %d)]\n", 
                                 id, 
                                 inet_ntoa((winfo[id].client_sockaddr).sin_addr), 
@@ -132,34 +172,15 @@ void *send_worker(void *args)
                                 winfo[id].modality);
 
                 } else {
-                        memset(chunk_read, 0x0, CHUNK_SIZE);
 
-                        set_message_type(&header, winfo[id].modality);
-                        set_sequence_number(&header, winfo[id].next_seq_num++);
-                        set_ack(&header, false);        
-                        set_last(&header, false);
-
-                        size_read = read(fd, chunk_read, CHUNK_SIZE);
-
-                        if (size_read == -1) {
-                                snprintf(err_mess, ERR_SIZE, "Unable to read from LS tmp file for %ld-th connection", id);
-                                perr(err_mess);
-                                goto exit_from_sender_thread;     
-                        } 
-                        
-                        if (size_read < CHUNK_SIZE) {
-                                set_last(&header, true);
-                                quit = true;
-                        }
-                        
-                        if (gbn_send(winfo[id].socket, header, chunk_read, size_read, &winfo[id].client_sockaddr, config) == -1) {
-                                snprintf(err_mess, ERR_SIZE, "Unable to send chunk to client for %ld-th connection", id);
+                        if ((has_next = send_file_chunk(id, fd, err_mess)) == -1) {
                                 perr(err_mess);
                                 goto exit_from_sender_thread;
                         }
+
                 }                    
                 
-        } while(!quit);
+        } while(has_next);
 
 exit_from_sender_thread:
         printf("Sender %ld is quitting right now\n", id);
@@ -172,9 +193,8 @@ void exit_server(int status)
         exit(status);
 }
 
-enum app_usages parse_cmd(int argc, char **argv, long *tpsize_ptr, unsigned short int *port)
+enum app_usages parse_cmd(int argc, char **argv, long *tpsize_ptr)
 {
-
         verbose = true;
         int opt;
 
@@ -194,7 +214,7 @@ enum app_usages parse_cmd(int argc, char **argv, long *tpsize_ptr, unsigned shor
         while ((opt = getopt_long(argc, argv, "p:N:t:P:s:hvV", long_options, NULL)) != -1) {
                 switch (opt) {
                         case 'p':
-                                *port = strtol(optarg, NULL, 10);
+                                acceptance_port = strtol(optarg, NULL, 10);
                                 break;
                         case 'N':
                                 if (strtol(optarg, NULL, 10) < MAX_SEQ_NUMBER / 2)
@@ -232,12 +252,20 @@ int init_socket(unsigned short int port, char *error_message)
 {
         int fd;
         struct sockaddr_in addr;
+        int enable = 1;
 
         memset(&addr, 0x0, sizeof(addr));
 
         if ((fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
                 snprintf(error_message, ERR_SIZE, "Unable to get socket file descriptor"); 
                 return -1;
+        }
+
+        if (port != acceptance_port) {
+                if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) == -1) {
+                        snprintf(error_message, ERR_SIZE, "Unable to set option on socket (REUSEADDR)"); 
+                        return -1;
+                }
         }
 
         addr.sin_family = AF_INET;
@@ -298,6 +326,19 @@ bool start_workers(long index, struct sockaddr_in *client_sockaddr, enum message
         return true;
 }
 
+void reset_worker_info(int id)
+{
+        winfo[id].socket = -1;
+        winfo[id].base = 1;
+        winfo[id].next_seq_num = 1;
+        winfo[id].expected_seq_num = 1;
+        winfo[id].last_acked_seq_num = 0;
+        winfo[id].is_available = true;
+        winfo[id].modality = ZERO;
+
+        return;
+}
+
 struct worker_info *init_worker_info(long nmemb) 
 {
         struct worker_info *wi;
@@ -307,19 +348,12 @@ struct worker_info *init_worker_info(long nmemb)
 
         for (int i = 0; i < nmemb; ++i) {
                 memset(&wi[i], 0x0, sizeof(struct worker_info));
-                wi[i].socket = -1;
-                wi[i].base = 1;
-                wi[i].next_seq_num = 1;
-                wi[i].expected_seq_num = 1;
-                wi[i].last_acked_seq_num = 0;
-                wi[i].port = START_WORKER_PORT + i;
-                wi[i].is_available = true;
-                wi[i].modality = ZERO;
+                wi[i].port = acceptance_port + i;
+                reset_worker_info(i);
         }
 
         return wi;
 }
-
 
 bool handle_recv(int id, char *error_message) 
 {
@@ -357,13 +391,13 @@ bool handle_recv(int id, char *error_message)
 
                 if (is_last(recv_header)) {
                         FD_CLR(winfo[id].socket, &all_fds);
+                        reset_worker_info(id);
                         printf("Comunication with %d-th client has expired\n", id);
                 }
         }
 
         return true;
 }
-
 
 bool acceptance_loop(int acc_socket, long tpsize, char *error_message)
 {
@@ -430,10 +464,10 @@ bool acceptance_loop(int acc_socket, long tpsize, char *error_message)
 
 bool check_installation(void) 
 {
-        char path[512];
+        char path[PATH_SIZE];
 
-        memset(path, 0x0, 512);
-        snprintf(path, 512, "/home/%s/.gbn-ftp-public/.tmp-ls", getenv("USER"));
+        memset(path, 0x0, PATH_SIZE);
+        snprintf(path, PATH_SIZE, "/home/%s/.gbn-ftp-public/.tmp-ls", getenv("USER"));
         
         if (access(path, F_OK) != -1)
                 return true;
@@ -444,7 +478,6 @@ bool check_installation(void)
 int main(int argc, char **argv)
 {
         int acceptance_sockfd;
-        unsigned short int acceptance_port;
         enum app_usages modality;
         long concurrenty_connections;
         char err_mess[ERR_SIZE];
@@ -469,7 +502,7 @@ int main(int argc, char **argv)
         }        
 
         acceptance_port = DEFAULT_PORT;
-        modality = parse_cmd(argc, argv, &concurrenty_connections, &acceptance_port);
+        modality = parse_cmd(argc, argv, &concurrenty_connections);
 
         switch(modality) {
                 case STANDARD: 
