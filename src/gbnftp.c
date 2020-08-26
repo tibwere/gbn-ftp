@@ -117,9 +117,7 @@ ssize_t gbn_send(int socket, gbn_ftp_header_t header, const void *payload, size_
         if((message = make_segment(header, payload, payload_length)) == NULL) 
                 return -1;
 
-        // una volta implementato il timer rimuovere l'or true
-        if (rand_double() > configs->probability/* || true*/) {
-                printf("Pacchetto realmente inviato\n");
+        if (rand_double() > configs->probability) {
                 if (sockaddr_in)
                         send_size = sendto(socket, message, length, MSG_NOSIGNAL, (struct sockaddr *) sockaddr_in, sizeof(struct sockaddr_in));
                 else
@@ -129,7 +127,6 @@ ssize_t gbn_send(int socket, gbn_ftp_header_t header, const void *payload, size_
                 return send_size;
                         
         } else {
-                printf("Pacchetto non inviato\n");
                 return 0;
         }
 }

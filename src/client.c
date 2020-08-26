@@ -11,6 +11,7 @@
 #include <time.h>
 #include <sys/select.h>
 #include <fcntl.h>
+#include <math.h>
 
 #include "gbnftp.h" 
 #include "common.h"
@@ -119,45 +120,63 @@ bool set_sockadrr_in(struct sockaddr_in *server_sockaddr, const char *address_st
 int connect_to_server(const char *address_string, enum message_type type, const char *filename, size_t filename_length, char *error_message)
 {
         int sockfd;
-        gbn_ftp_header_t header;
+        gbn_ftp_header_t send_header;
+        gbn_ftp_header_t recv_header;
         struct sockaddr_in server_sockaddr;
+        fd_set read_fds;
+        int retval;
+        struct timeval tv;
+        ssize_t wsize; // da togliere dopo il debug
 
-        set_ack(&header, false);
-        set_sequence_number(&header, 1);
-        set_message_type(&header, type);
-        set_last(&header, false);
+        set_ack(&send_header, false);
+        set_sequence_number(&send_header, 1);
+        set_message_type(&send_header, type);
+        set_last(&send_header, false);
 
         if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
                 snprintf(error_message, ERR_SIZE, "Unable to get socket file descriptor (1st step)");
                 return -1;
         }
 
-        if (!set_sockadrr_in(&server_sockaddr, address_string, server_port, error_message)) 
-                return -1;
-
-
         while (true) {
 
+                FD_ZERO(&read_fds);
+                FD_SET(sockfd, &read_fds);
+
+                if (!set_sockadrr_in(&server_sockaddr, address_string, server_port, error_message)) 
+                        return -1;
+
                 /* SEND CMD */
-                if (gbn_send(sockfd, header, filename, filename_length, &server_sockaddr, config) == -1) {
+                if ((wsize = gbn_send(sockfd, send_header, filename, filename_length, &server_sockaddr, config)) == -1) {
                         snprintf(error_message, ERR_SIZE, "Unable to send LIST command to server");
                         return -1;
                 }
 
-                memset(&server_sockaddr, 0x0, sizeof(struct sockaddr_in));
-                        
-                if(gbn_receive(sockfd, &header, NULL, &server_sockaddr) == -1) {
-                        snprintf(error_message, ERR_SIZE, "Unable to receive ACK from server (gbn_receive)");
+                printf("%snviato il primo segmento (OP %d)\n", (wsize == 0) ? "Non i" : "I", get_message_type(send_header));
+
+                tv.tv_sec = floor((double)config->rto_usec / (double) 1000000);
+                tv.tv_usec = config->rto_usec % 1000000;
+ 
+                if ((retval = select(sockfd + 1, &read_fds, NULL, NULL, &tv)) == -1) {
+                        snprintf(error_message, ERR_SIZE, "Unable to receive ACK from server (select)");
                         return -1;
                 }
 
-                if (!(is_ack(header) && (get_sequence_number(header) == 1))) {
-                        snprintf(error_message, ERR_SIZE, "Comunication protocol broken");
-                        return -1;
+                if (retval) {
+                        memset(&server_sockaddr, 0x0, sizeof(struct sockaddr_in));
+
+                        if(gbn_receive(sockfd, &recv_header, NULL, &server_sockaddr) == -1) {
+                                snprintf(error_message, ERR_SIZE, "Unable to receive ACK from server (gbn_receive)");
+                                return -1;
+                        }
+
+                        if ((is_ack(recv_header) && (get_sequence_number(recv_header) == 1))) {
+                                break;
+                        }
                 }
-                        
-                break; 
         }
+
+        printf("Ricevuto il primo ACK\n");
 
 	if (connect(sockfd, (struct sockaddr *) &server_sockaddr, sizeof(struct sockaddr_in)) == -1) {
                 snprintf(error_message, ERR_SIZE, "Connection to server failed");
@@ -178,6 +197,7 @@ bool get_file(const char *address_string, char *error_message)
         char filename[CHUNK_SIZE];
         char full_path[2 * CHUNK_SIZE];
         int fd;
+        ssize_t wsize; // da togliere dopo il debug
 
         size_t header_size = sizeof(gbn_ftp_header_t);
 
@@ -226,10 +246,12 @@ bool get_file(const char *address_string, char *error_message)
                         set_last(&send_header, true);
                 } 
 
-                if (gbn_send(sockfd, send_header, NULL, 0, NULL, config) == -1) {
+                if ((wsize = gbn_send(sockfd, send_header, NULL, 0, NULL, config)) == -1) {
                         snprintf(error_message, ERR_SIZE, "Unable to send ACK to server");
                         return false;
                 }
+
+                printf("%snviato ACK %d\n", (wsize == 0) ? "Non i" : "I", get_sequence_number(send_header));
 
         } while(!is_last(recv_header));
 
@@ -248,6 +270,9 @@ bool list(const char *address_string, char *error_message)
         gbn_ftp_header_t recv_header;
         gbn_ftp_header_t send_header;
         ssize_t recv_size;
+        ssize_t wsize; // da togliere dopo il debug
+
+        size_t header_size = sizeof(gbn_ftp_header_t);
 
         set_ack(&send_header, true);
         set_message_type(&send_header, LIST);
@@ -267,12 +292,12 @@ bool list(const char *address_string, char *error_message)
                         return false;
                 }
 
-                if (write(STDIN_FILENO, payload, recv_size) == -1) {
+                printf("Ricevuto chunk %d (dim: %ld)\n", get_sequence_number(recv_header), recv_size - header_size);
+
+                if (write(STDIN_FILENO, payload, recv_size - header_size) == -1) {
                         snprintf(error_message, ERR_SIZE, "Unable to print out info received from server");
                         return false;  
                 }
-
-                printf("Ricevuto SEQNO: %d (LAST = %d)\n", get_sequence_number(recv_header), is_last(recv_header));
 
                 if(get_sequence_number(recv_header) == expected_seq_num) 
                         set_sequence_number(&send_header, expected_seq_num++);
@@ -283,12 +308,12 @@ bool list(const char *address_string, char *error_message)
                         set_last(&send_header, true);
                 }
 
-                if (gbn_send(sockfd, send_header, NULL, 0, NULL, config) == -1) {
+                if ((wsize = gbn_send(sockfd, send_header, NULL, 0, NULL, config)) == -1) {
                         snprintf(error_message, ERR_SIZE, "Unable to send ACK to server");
                         return false;
                 }
 
-                printf("Inviato ACK %d (LAST %d)\n", get_sequence_number(send_header), is_last(send_header));
+                printf("%snviato ACK %d\n", (wsize == 0) ? "Non i" : "I", get_sequence_number(send_header));
 
         } while(!is_last(recv_header));
 
