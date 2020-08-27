@@ -102,6 +102,12 @@ unsigned long elapsed_usec(const struct timeval *start, const struct timeval *st
 {
         unsigned long sec;
         unsigned long usec;
+        struct timeval emptytv;
+
+        memset(&emptytv, 0x0, sizeof(struct timeval));
+
+        if (memcmp(start, &emptytv, sizeof(struct timeval)) == 0)
+                return -1;
 
         sec = stop->tv_sec - start->tv_sec;
         usec = stop->tv_usec - start->tv_usec;

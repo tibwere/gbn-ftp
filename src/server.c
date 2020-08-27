@@ -11,6 +11,7 @@
 #include <sys/time.h>
 #include <fcntl.h>
 #include <math.h>
+#include <errno.h>
 
 #include "gbnftp.h" 
 #include "common.h"
@@ -20,14 +21,11 @@
 #define CMD_SIZE 128
 #define START_WORKER_PORT 29290
 
-#define S_OK 0
-#define S_QUIT 1
-
 struct worker_info {
         int socket;
         char id_string[ID_STR_LENGTH];
         unsigned short port;
-        bool is_available;
+        volatile enum connection_status status;
         struct sockaddr_in client_sockaddr;
         pthread_mutex_t mutex;
         pthread_cond_t cond_var;
@@ -40,7 +38,7 @@ struct worker_info {
         struct timeval start_timer;
         struct gbn_config cfg;
         pthread_t tid;
-        volatile int status;
+        int fd;
 };
 
 
@@ -54,16 +52,14 @@ struct worker_info *winfo;
 struct gbn_config *config;
 fd_set all_fds;
 
-
-ssize_t send_file_chunk(long id, int fd, char *error_message);
-int handle_first_message(long id, char *error_message);
-void set_timeout(long index, struct timespec *ts);
-void handle_retransmition(long index, int fd, char *error_message);
+bool handle_retransmit(long id, char * error_message); 
+ssize_t send_file_chunk(long id, char *error_message);
+ssize_t send_new_port_mess(long id, char *error_message);
 void *send_worker(void *args);
 void exit_server(int status);
 enum app_usages parse_cmd(int argc, char **argv, long *tpsize_ptr);
 int init_socket(unsigned short int port, char *error_message);
-long get_available_worker(long nmemb);
+long get_available_worker(long nmemb, const struct sockaddr_in *addr, bool *already_handled_ptr);
 bool start_sender(long index, struct sockaddr_in *client_sockaddr, enum message_type modality, const char *payload, char *error_message);
 bool reset_worker_info(int id, bool need_destroy, char *error_message);
 bool init_worker_info(long nmemb, char *error_message);
@@ -72,7 +68,24 @@ bool acceptance_loop(int acc_socket, long size, char *error_message);
 bool check_installation(void); 
 
 
-ssize_t send_file_chunk(long id, int filedesc, char *error_message)
+bool handle_retransmit(long id, char * error_message) 
+{
+        unsigned int base = winfo[id].base - 1;
+        unsigned int next_seq_num = winfo[id].next_seq_num;
+
+        printf("Riparto da %ld\n", lseek(winfo[id].fd, base * CHUNK_SIZE, SEEK_SET));
+        winfo[id].next_seq_num = winfo[id].base;
+        winfo[id].status = CONNECTED;
+        gettimeofday(&winfo[id].start_timer, NULL);
+
+        for (unsigned int i = base; i < next_seq_num; ++i)
+                if (send_file_chunk(id, error_message) == -1)
+                        return false;
+
+        return true;
+}
+
+ssize_t send_file_chunk(long id, char *error_message)
 {
         gbn_ftp_header_t header;
         char buff[CHUNK_SIZE];
@@ -81,7 +94,7 @@ ssize_t send_file_chunk(long id, int filedesc, char *error_message)
 
         memset(buff, 0x0, CHUNK_SIZE);
 
-        if ((rsize = read(filedesc, buff, CHUNK_SIZE)) == -1) {
+        if ((rsize = read(winfo[id].fd, buff, CHUNK_SIZE)) == -1) {
                 snprintf(error_message, ERR_SIZE, "Unable to read from selected file for %ld-th connection", id);
                 return -1;                
         }
@@ -92,17 +105,20 @@ ssize_t send_file_chunk(long id, int filedesc, char *error_message)
                 set_sequence_number(&header, winfo[id].next_seq_num++);
                 set_ack(&header, false);        
                 
-                if (rsize < CHUNK_SIZE) 
+                if (rsize < CHUNK_SIZE) {
                         set_last(&header, true);
-                else
+                } else {
                         set_last(&header, false);
+                }   
 
                 if ((wsize = gbn_send(winfo[id].socket, header, buff, rsize, &winfo[id].client_sockaddr, &winfo[id].cfg)) == -1) {
                         snprintf(error_message, ERR_SIZE, "Unable to send chunk to client for %ld-th connection", id);
                         return -1;
                 }
 
-                printf("%s %snviato segmento %d\n", winfo[id].id_string, (wsize == 0) ? "Non i" : "I", get_sequence_number(header));
+                #ifdef DEBUG
+                printf("%s Segment no. %d %ssent\n", winfo[id].id_string, get_sequence_number(header), (wsize == 0) ? "not " : "");
+                #endif
 
                 if (pthread_mutex_lock(&winfo[id].mutex)) {
                         snprintf(error_message, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex_%ld)", id);
@@ -111,7 +127,7 @@ ssize_t send_file_chunk(long id, int filedesc, char *error_message)
 
                 if (winfo[id].base == winfo[id].next_seq_num) 
                         gettimeofday(&winfo[id].start_timer, NULL);
-                
+
                 if (pthread_mutex_unlock(&winfo[id].mutex)) {
                         snprintf(error_message, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex_%ld)", id);
                         return -1;
@@ -123,78 +139,67 @@ ssize_t send_file_chunk(long id, int filedesc, char *error_message)
         return 0;    
 }
 
-int handle_first_message(long id, char *error_message) 
+ssize_t send_new_port_mess(long id, char *error_message)
 {
-        int fd;
-        char filename[PATH_SIZE];
         gbn_ftp_header_t header;
-        ssize_t wsize; // da togliere dopo il debug
+        struct timespec ts;
+        struct timeval tv;
+        int ret;
+        ssize_t wsize;
 
-        set_ack(&header, true);
-        set_sequence_number(&header, 1);
+        set_sequence_number(&header, 0);
         set_message_type(&header, winfo[id].modality);
         set_last(&header, false);
+        set_ack(&header, false);
 
-        if ((wsize = gbn_send(winfo[id].socket, header, NULL, 0, &winfo[id].client_sockaddr, &winfo[id].cfg)) == -1) {
-                snprintf(error_message, ERR_SIZE, "Unable to send initial ACK for %ld-th connection (ACK)", id);
-                return -1;
-        }
-
-        printf("%s %snviato primo ACK\n", winfo[id].id_string, (wsize == 0) ? "Non i" : "I");
-
-        memset(filename, 0x0, PATH_SIZE);
-
-        if (winfo[id].modality == LIST) {
-                snprintf(filename, PATH_SIZE, "/home/%s/.gbn-ftp-public/.tmp-ls", getenv("USER"));
-                if ((fd = open(filename, O_RDONLY)) == -1) {
-                        snprintf(error_message, ERR_SIZE, "Unable to open LS tmp file for %ld-th connection", id);
-                        return -1;    
+        do {
+                if ((wsize = gbn_send(winfo[id].socket, header, NULL, 0, &winfo[id].client_sockaddr, &winfo[id].cfg)) == -1) {
+                        snprintf(error_message, ERR_SIZE, "Unable to send NEW_PORT message to %ld-th client", id);
+                        return false;
                 }
-        }
 
-        if (winfo[id].modality == GET) {
+                #ifdef DEBUG
+                printf("%s NEW PORT segment %ssent\n", winfo[id].id_string, (wsize == 0) ? "not " : "");
+                #endif
 
-                snprintf(filename, PATH_SIZE, "/home/%s/.gbn-ftp-public/%s", getenv("USER"), winfo[id].filename);
-                if ((fd = open(filename, O_RDONLY)) == -1) {
-                        snprintf(error_message, ERR_SIZE, "Unable to retrive requested file for %ld-th connection", id);
-                        return -1;
+                if (pthread_mutex_lock(&winfo[id].mutex)) {
+                        snprintf(error_message, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex_%ld)", id);
+                        return false;
                 }
-        }
 
-        return fd;
+                while (winfo[id].status != CONNECTED) {
+                        gettimeofday(&tv, NULL);
+                        ts.tv_sec = tv.tv_sec + floor((double) winfo[id].cfg.rto_usec / (double) 1000000);
+                        ts.tv_nsec = (tv.tv_usec + (winfo[id].cfg.rto_usec % 1000000)) * 1000;
+                        
+                        ret = pthread_cond_timedwait(&winfo[id].cond_var, &winfo[id].mutex, &ts);
+                        
+                        if (ret > 0 && ret != ETIMEDOUT) {
+                                snprintf(error_message, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_condvar_%ld)", id);
+                                return false;
+                        } else {
+                                break;
+                        }
+                }
+
+                if (pthread_mutex_unlock(&winfo[id].mutex)) {
+                        snprintf(error_message, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex_%ld)", id);
+                        return false;
+                }  
+
+        } while (winfo[id].status == REQUEST);
+        
+        return true;
 }
 
-void set_timeout(long index, struct timespec *ts)
-{
-        ts->tv_sec = floor((double) winfo[index].cfg.rto_usec / (double) 1000000);
-        ts->tv_nsec = (winfo[index].cfg.rto_usec % 1000000) * 1000;
-}
-
-void handle_retransmition(long index, int fd, char *error_message)
-{
-        printf("%s timer scaduto\n", winfo[index].id_string);
-        lseek(fd, (winfo[index].base - 1) * CHUNK_SIZE, SEEK_SET);
-        winfo[index].next_seq_num = winfo[index].base;
-
-        for (unsigned int i = winfo[index].base; i < winfo[index].next_seq_num; ++i) {
-                printf("base: %d - next_seq_num: %d\n", winfo[index].base, winfo[index].next_seq_num);
-                send_file_chunk(index, fd, error_message);
-        }
-
-        gettimeofday(&winfo[index].start_timer, NULL);
-}
-
-void *send_worker(void *args)
+void *send_worker(void *args) 
 {
         long id = (long) args;
         char err_mess[ERR_SIZE];
-        int fd;
-        struct timeval now;
-        ssize_t last_write_size;
-        int to_counter = 0;
-        struct timespec ts;
-
-        memset(err_mess, 0x0, ERR_SIZE);
+        struct timeval tv;
+        bool fail = false;
+        unsigned short timeout_counter = 0;
+        unsigned int last_base_for_timeout = winfo[id].base;
 
         snprintf(winfo[id].id_string, ID_STR_LENGTH, "[Worker no. %ld - Client connected: %s:%d (OP: %d)]", 
                 id, 
@@ -202,74 +207,75 @@ void *send_worker(void *args)
                 ntohs((winfo[id].client_sockaddr).sin_port),
                 winfo[id].modality);
 
-        if ((fd = handle_first_message(id, err_mess)) == -1) {
+        do  {
+                switch (winfo[id].status) {
+
+                        case REQUEST:
+                                if (send_new_port_mess(id, err_mess) == -1) {
+                                        fail = true;
+                                        winfo[id].status = QUIT;
+                                }      
+                                break;
+
+                        case CONNECTED:
+                                if (winfo[id].next_seq_num < winfo[id].base + winfo[id].cfg.N) {
+                                        if (send_file_chunk(id, err_mess) == -1) {
+                                                fail = true;
+                                                winfo[id].status = QUIT;
+                                        }
+                                }
+
+                                if (winfo[id].status != QUIT) {
+                                        gettimeofday(&tv, NULL);
+                                        if (elapsed_usec(&winfo[id].start_timer, &tv) >= winfo[id].cfg.rto_usec)
+                                                winfo[id].status = TIMEOUT;
+                                }
+
+                                break;
+
+                        case TIMEOUT:
+
+                                #ifdef DEBUG
+                                printf("%s Timeout event (%d)\n", winfo[id].id_string, winfo[id].base);
+                                #endif       
+
+                                if (winfo[id].base == last_base_for_timeout) {
+                                        if (timeout_counter < MAX_TO) {
+                                                if (!handle_retransmit(id, err_mess)) {
+                                                        fail = true;
+                                                        winfo[id].status = QUIT;
+                                                }
+                                        } else  
+                                                winfo[id].status = QUIT;
+
+
+                                        ++timeout_counter;
+                                } else {
+                                        timeout_counter = 1;
+                                        
+                                        if (!handle_retransmit(id, err_mess)) {
+                                                fail = true;
+                                                winfo[id].status = QUIT;
+                                        }
+
+                                }
+
+                                break;
+                        
+                        default: 
+                                break;
+                }
+
+        } while (winfo[id].status != QUIT);
+
+        if (fail)
                 perr(err_mess);
-                goto exit_from_sender_thread;
-        }
 
-        gettimeofday(&winfo[id].start_timer, NULL);
-
-        while (winfo[id].status != S_QUIT) {                
-
-                gettimeofday(&now, NULL);
-                if (elapsed_usec(&winfo[id].start_timer, &now) >= winfo[id].cfg.rto_usec) {
-                        if (++to_counter >= MAX_TO)
-                                goto abort_connection;
-                        else
-                                handle_retransmition(id, fd, err_mess);
-                }
-                        
-
-                if (pthread_mutex_lock(&winfo[id].mutex)) {
-                        snprintf(err_mess, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex_%ld)", id);
-                        perr(err_mess);
-                        goto exit_from_sender_thread;
-                }
-
-                while(winfo[id].next_seq_num >= winfo[id].base + winfo[id].cfg.N) {
-
-                        set_timeout(id, &ts); 
-                        
-                        if (pthread_cond_timedwait(&winfo[id].cond_var, &winfo[id].mutex, &ts)) {
-                                snprintf(err_mess, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_condvar_%ld)", id);
-                                perr(err_mess);
-                                goto exit_from_sender_thread;
-                        }
-
-                        if (winfo[id].next_seq_num >= winfo[id].base + winfo[id].cfg.N) {
-                                if (++to_counter >= MAX_TO)
-                                        goto abort_connection;
-                                else
-                                        handle_retransmition(id, fd, err_mess);
-                        }
-                }
-
-                if (pthread_mutex_unlock(&winfo[id].mutex)) {
-                        snprintf(err_mess, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex_%ld)", id);
-                        perr(err_mess);
-                        goto exit_from_sender_thread;
-                }
-
-                if ((last_write_size = send_file_chunk(id, fd, err_mess)) == -1) {
-                        perr(err_mess);
-                        goto exit_from_sender_thread;
-                }                 
-                
-        }
-
-exit_from_sender_thread:
+        #ifdef DEBUG
         printf("%s is quitting right now\n", winfo[id].id_string);
-        if (fd != -1)
-                close(fd);
-        pthread_exit(NULL);
+        #endif
 
-abort_connection:
-        printf("%s maximum number of timeout reached: connection aborted\n", winfo[id].id_string);
-        FD_CLR(winfo[id].socket, &all_fds);
-        reset_worker_info(id, true, err_mess);
-        if (fd != -1)
-                close(fd);
-        pthread_exit(NULL); // TODO appendere il tid ad una lista concatenata per le join finali
+        pthread_exit(NULL);
 }
 
 void exit_server(int status) 
@@ -365,28 +371,63 @@ int init_socket(unsigned short int port, char *error_message)
         return fd;
 }
 
-long get_available_worker(long nmemb)
+long get_available_worker(long nmemb, const struct sockaddr_in *addr, bool *already_handled_ptr)
 {
-        long i = 0;
+        long ret, i;
+        
+        ret = -1;
+        i = 0;
 
         while (i < nmemb) {
-                if (winfo[i].is_available) {
-                        winfo[i].is_available = false;
-                        return i;
+                if (winfo[i].status == FREE) {
+                        winfo[i].status = REQUEST;
+                        ret = i;
+                        break;
                 }
 
                 ++i;
         }
 
-        return -1;
+        i = 0;
+        *already_handled_ptr = false;
+
+        while (i < nmemb) {
+                if (memcmp(&winfo[i].client_sockaddr, addr, sizeof(struct sockaddr_in)) == 0)
+                        *already_handled_ptr = true;
+
+                ++i;
+        }
+
+        return ret;
 }
 
 bool start_sender(long index, struct sockaddr_in *client_sockaddr, enum message_type modality, const char *payload, char *error_message)
 {
+        char path[PATH_SIZE];
+
+        memset(path, 0x0, PATH_SIZE);
+
         memcpy(&winfo[index].client_sockaddr, client_sockaddr, sizeof(struct sockaddr_in));
 
         winfo[index].modality = modality;
         strncpy(winfo[index].filename, payload, CHUNK_SIZE);
+
+        if (winfo[index].modality == LIST) {
+                snprintf(path, PATH_SIZE, "/home/%s/.gbn-ftp-public/.tmp-ls", getenv("USER"));
+                if ((winfo[index].fd = open(path, O_RDONLY)) == -1) {
+                        snprintf(error_message, ERR_SIZE, "Unable to open LS tmp file for %ld-th connection", index);
+                        return false;    
+                }
+        }
+
+        if (winfo[index].modality == GET) {
+
+                snprintf(path, PATH_SIZE, "/home/%s/.gbn-ftp-public/%s", getenv("USER"), winfo[index].filename);
+                if ((winfo[index].fd = open(path, O_RDONLY)) == -1) {
+                        snprintf(error_message, ERR_SIZE, "Unable to retrive requested file for %ld-th connection", index);
+                        return false;
+                }
+        }
 
         if ((winfo[index].socket = init_socket(winfo[index].port, error_message)) == -1) 
                 return false;
@@ -430,9 +471,8 @@ bool reset_worker_info(int id, bool need_destroy, char *error_message)
         winfo[id].next_seq_num = 1;
         winfo[id].expected_seq_num = 1;
         winfo[id].last_acked_seq_num = 0;
-        winfo[id].is_available = true;
         winfo[id].modality = ZERO;
-        winfo[id].status = S_OK;
+        winfo[id].status = FREE;
 
         return true;
 }
@@ -472,7 +512,13 @@ bool handle_recv(int id, char *error_message)
 
         if(is_ack(recv_header)) {
 
-                printf("%s ricevuto ACK %d\n", winfo[id].id_string, get_sequence_number(recv_header));
+                #ifdef DEBUG
+                printf("%s ACK no. %d received (base: %d)\n", winfo[id].id_string, get_sequence_number(recv_header), winfo[id].base);
+                #endif
+
+                if (get_sequence_number(recv_header) == 0) {
+                        winfo[id].status = CONNECTED;
+                }
 
                 if (get_sequence_number(recv_header) >= winfo[id].base) {
 
@@ -494,17 +540,24 @@ bool handle_recv(int id, char *error_message)
                         }
                 }
 
+                if (winfo[id].base == winfo[id].next_seq_num)
+                        memset(&winfo[id].start_timer, 0x0, sizeof(struct timeval));
+                else    
+                        gettimeofday(&winfo[id].start_timer, NULL);
+
                 if (is_last(recv_header)) {
+                        winfo[id].status = QUIT;
                         FD_CLR(winfo[id].socket, &all_fds);
-                        winfo[id].status = S_QUIT;
-                        
+
                         pthread_join(winfo[id].tid, NULL);
+
                         if (!reset_worker_info(id, true, error_message))
                                 return false;
 
-                        
+                        #ifdef DEBUG
                         printf("Comunication with %d-th client has expired\n", id);
-                }
+                        #endif
+                } 
         }
 
         return true;
@@ -517,6 +570,7 @@ bool acceptance_loop(int acc_socket, long tpsize, char *error_message)
         gbn_ftp_header_t header;
         char payload[CHUNK_SIZE];
         fd_set read_fds;
+        bool already_handled;
 
         FD_ZERO(&all_fds);
         FD_SET(acc_socket, &all_fds);
@@ -539,20 +593,38 @@ bool acceptance_loop(int acc_socket, long tpsize, char *error_message)
                                 return false;
                         }
 
-                        printf("Ricevuta richiesta di connessione per %s:%d\n", inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
+                        #ifdef DEBUG
+                        printf("[Main Thread] Received request from %s:%d\n", inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
+                        #endif
+
+                        if (!(is_last(header) && !is_ack(header) && (get_sequence_number(header) == 0))) {
+                                snprintf(error_message, ERR_SIZE, "Connection protocol broken");
+                                return false;
+                        }
                         
-                        if ((winfo_index = get_available_worker(tpsize)) == -1) {
+                        if ((winfo_index = get_available_worker(tpsize, &addr, &already_handled)) == -1) {
                                 snprintf(error_message, ERR_SIZE, "All workers are busy. Can't handle request");
                                 return false;
                         }
 
-                        if (!start_sender(winfo_index, &addr, get_message_type(header), payload, error_message))
-                                return false;
+                        if (!already_handled) {
+                                #ifdef DEBUG
+                                printf("[Main Thread] Accept request from %s:%d\n", inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
+                                #endif
 
-                        FD_SET(winfo[winfo_index].socket, &all_fds);
+                                if (!start_sender(winfo_index, &addr, get_message_type(header), payload, error_message))
+                                        return false;
 
-                        if (winfo[winfo_index].socket > maxfd) 
-                                maxfd = winfo[winfo_index].socket;
+                                FD_SET(winfo[winfo_index].socket, &all_fds);
+
+                                if (winfo[winfo_index].socket > maxfd) 
+                                        maxfd = winfo[winfo_index].socket;
+                        }
+
+                        #ifdef DEBUG
+                        else
+                                printf("[Main Thread] Reject request from %s:%d\n", inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
+                        #endif
 
                         if (--ready_fds <= 0)
                                 continue;
@@ -590,6 +662,10 @@ bool check_installation(void)
 
 int main(int argc, char **argv)
 {
+        #ifdef DEBUG
+        printf("*** DEBUG MODE ***\n\n\n");
+        #endif
+
         int acceptance_sockfd;
         enum app_usages modality;
         long concurrenty_connections;

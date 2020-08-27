@@ -47,6 +47,8 @@ typedef unsigned int gbn_ftp_header_t;
 
 enum message_type {ZERO, LIST, PUT, GET};
 
+enum connection_status {FREE, REQUEST, CONNECTED, TIMEOUT, QUIT};
+
 void set_sequence_number(gbn_ftp_header_t *header, unsigned int seq_no);
 unsigned int get_sequence_number(gbn_ftp_header_t header);
 void set_message_type(gbn_ftp_header_t *header, enum message_type type);
@@ -57,9 +59,5 @@ void set_ack(gbn_ftp_header_t *header, bool is_conn);
 bool is_ack(gbn_ftp_header_t header);
 ssize_t gbn_send(int socket, gbn_ftp_header_t header, const void *payload, size_t payload_length, const struct sockaddr_in *sockaddr_in, const struct gbn_config *configs);
 ssize_t gbn_receive(int socket, gbn_ftp_header_t *header, char *payload, const struct sockaddr_in *sockaddr_in);
-/*
-bool is_syn_pkt(gbn_ftp_header_t header);
-bool is_synack_pkt(gbn_ftp_header_t header, const char *payload);
-bool is_ack_pkt(gbn_ftp_header_t header, const char *payload, unsigned int *ack_no_ptr);
-*/
+
 #endif
