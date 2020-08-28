@@ -1,6 +1,6 @@
 IDIR = ./include
 CC = gcc
-CFLAGS = -I$(IDIR) -Wall -Wextra -DDEBUG
+CFLAGS = -I$(IDIR) -Wall -Wextra# -DDEBUG
 ODIR = ./obj
 BDIR = ./bin
 SDIR = ./src

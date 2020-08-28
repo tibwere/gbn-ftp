@@ -7,20 +7,20 @@
 #include "common.h"
 
 const struct gbn_config DEFAULT_GBN_CONFIG = {
-        16, 1000000, false, 0.2
+        16, 1000000, false, 0.1
 };
 
 void set_sequence_number(gbn_ftp_header_t *header, unsigned int seq_no) 
 {
-        int flags = *header & FLAG_MASK;
-        int seq = (seq_no % MAX_SEQ_NUMBER) << FLAGS_SIZE;
+        int flags = *header & BITMASK_SIZE;
+        int seq = (seq_no % MAX_SEQ_NUMBER) << BITMASK_SIZE;
 
         *header = seq | flags;
 }
 
 unsigned int get_sequence_number(gbn_ftp_header_t header)
 {
-        return header >> FLAGS_SIZE;
+        return header >> BITMASK_SIZE;
 }
 
 void set_message_type(gbn_ftp_header_t *header, enum message_type type)
@@ -79,6 +79,22 @@ bool is_ack(gbn_ftp_header_t header)
 {
         return ((header & ACK_MASK) == ACK_MASK) ? true : false;
 }
+
+void set_err(gbn_ftp_header_t *header, bool is_err)
+{
+        if (is_err)
+                *header |= ERR_MASK;
+        else
+                *header &= ~ERR_MASK;
+        
+}
+
+bool is_err(gbn_ftp_header_t header)
+{
+        return ((header & ERR_MASK) == ERR_MASK) ? true : false;
+}
+
+
 
 static char * make_segment(gbn_ftp_header_t header, const char *payload, size_t payload_size)
 {

@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <arpa/inet.h>
 
-#define MAX_SEQ_NUMBER 268435455 
+#define MAX_SEQ_NUMBER 134217727
 
 #define ZERO_MASK 0x0
 #define LIST_MASK 0x1
@@ -14,11 +14,12 @@
 
 #define LAST_MASK 0x4
 #define ACK_MASK 0x8
+#define ERR_MASK 0x10
 
-#define FLAG_MASK 0xe
+#define FLAG_MASK 0x1f
 
-#define SEQ_NUM_SIZE 28
-#define FLAGS_SIZE 4
+#define SEQ_NUM_SIZE 27
+#define BITMASK_SIZE 5
 #define TYPE_SIZE 2
 
 #define DEFAULT_PORT 2929
@@ -33,8 +34,9 @@ struct gbn_config {
 
 /* STRUTTURA DELL'HEADER DEL PROTOCOLLO
  * 4 BYTE (32 bit)
- * 28 bit dedicati al numero di sequenza (268435455 numeri possibili)
- * 4 bit di flag cosi' organizzati:
+ * 27 bit dedicati al numero di sequenza (268435455 numeri possibili)
+ * 5 bit di flag cosi' organizzati:
+ *      - err (1 bit)
  *      - ack (1 bit)
  *      - last (1 bit)
  *      - type (2 bit):
@@ -57,6 +59,8 @@ void set_last(gbn_ftp_header_t *header, bool is_last);
 bool is_last(gbn_ftp_header_t header);
 void set_ack(gbn_ftp_header_t *header, bool is_conn);
 bool is_ack(gbn_ftp_header_t header);
+void set_err(gbn_ftp_header_t *header, bool is_err);
+bool is_err(gbn_ftp_header_t header);
 ssize_t gbn_send(int socket, gbn_ftp_header_t header, const void *payload, size_t payload_length, const struct sockaddr_in *sockaddr_in, const struct gbn_config *configs);
 ssize_t gbn_receive(int socket, gbn_ftp_header_t *header, char *payload, const struct sockaddr_in *sockaddr_in);
 

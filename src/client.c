@@ -49,6 +49,7 @@ bool check_installation(void);
 void exit_client(int status) 
 {
         /* TODO: implementare chiusura pulita */
+        close(sockfd);
         exit(status);
 }
 
@@ -138,7 +139,7 @@ ssize_t send_request(enum message_type type, const char *filename, size_t filena
                 snprintf(error_message, ERR_SIZE, "Unable to send request command to server (OP %d)", type);
 
         #ifdef DEBUG
-        printf("Request segment %ssent\n", (wsize == 0) ? "not " : "");
+        printf("[DEBUG] Request segment %ssent\n", (wsize == 0) ? "not " : "");
         #endif
         
         return wsize;
@@ -158,7 +159,7 @@ ssize_t send_ack(enum message_type type, unsigned int seq_num, bool is_last, cha
                 snprintf(error_message, ERR_SIZE, "Unable to send request command to server (OP %d)", type);
 
         #ifdef DEBUG
-        printf("ACK no. %d %ssent\n", seq_num, (wsize == 0) ? "not " : "");
+        printf("[DEBUG] ACK no. %d %ssent\n", seq_num, (wsize == 0) ? "not " : "");
         #endif
         
         return wsize;
@@ -177,7 +178,6 @@ bool list(char *error_message)
         ssize_t recv_size;
         size_t header_size = sizeof(gbn_ftp_header_t);
         struct sockaddr_in addr;
-
 
         if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
                 snprintf(error_message, ERR_SIZE, "Unable to get socket file descriptor (REQUEST)");
@@ -211,7 +211,7 @@ bool list(char *error_message)
                         if ((get_sequence_number(recv_header) == 0) && !is_ack(recv_header) && (recv_size - header_size == 0)) {
                                 
                                 #ifdef DEBUG
-                                printf("Received NEW PORT message\n");
+                                printf("[DEBUG] Received NEW PORT message\n");
                                 #endif
 
                                 if (connect(sockfd, (struct sockaddr *) &addr, sizeof(struct sockaddr_in)) == -1) {
@@ -221,10 +221,6 @@ bool list(char *error_message)
                                 if (send_ack(LIST, 0, false, error_message) == -1)
                                         return false;
                         }
-                        #ifdef DEBUG
-                        else
-                                printf("Received unexpected message\n");
-                        #endif
                 }  
         }
 
@@ -240,7 +236,7 @@ bool list(char *error_message)
                 }
 
                 #ifdef DEBUG
-                printf("Received chunk no. %d (DIM. %ld)\n", get_sequence_number(recv_header), recv_size - header_size);
+                printf("[DEBUG] Received chunk no. %d (DIM. %ld)\n", get_sequence_number(recv_header), recv_size - header_size);
                 #endif
 
                 if(get_sequence_number(recv_header) == expected_seq_num) {
@@ -258,23 +254,16 @@ bool list(char *error_message)
                                 status = QUIT;
                         
                                 // Al termine invio 4 ACK per aumentare la probabilità di ricezione da parte del server
-                                if (send_ack(LIST, last_acked_seq_num, true, error_message) == -1)
-                                        return false;
-
-                                if (send_ack(LIST, last_acked_seq_num, true, error_message) == -1)
-                                        return false;
-
-                                if (send_ack(LIST, last_acked_seq_num, true, error_message) == -1)
-                                        return false;
+                                for (int i = 0; i < LAST_MESSAGE_LOOP - 1; ++i) {
+                                        if (send_ack(LIST, last_acked_seq_num, true, error_message) == -1)
+                                                return false;
+                                }
                         }
 
                 } else {
                         if (send_ack(LIST, last_acked_seq_num, false, error_message) == -1)
                                 return false;
-                }
-
-
-                        
+                }                        
         }
 
         printf("Press any key to get back to menu\n");
@@ -308,6 +297,7 @@ bool get_file(char *error_message)
         printf("Which file do you want to download? ");
         fflush(stdout);
         get_input(CHUNK_SIZE, filename, false);
+        printf("Wait for download ...\n");
 
         snprintf(path, PATH_SIZE, "/home/%s/.gbn-ftp-download/%s", getenv("USER"), filename);
 
@@ -345,10 +335,10 @@ bool get_file(char *error_message)
                                 return false;
                         }
 
-                        if ((get_sequence_number(recv_header) == 0) && !is_ack(recv_header) && (recv_size - header_size == 0)) {
+                        if ((get_sequence_number(recv_header) == 0) && !is_ack(recv_header) && (recv_size - header_size == 0) && !is_err(recv_header)) {
                                 
                                 #ifdef DEBUG
-                                printf("Received NEW PORT message\n");
+                                printf("[DEBUG] Received NEW PORT message\n");
                                 #endif
 
                                 if (connect(sockfd, (struct sockaddr *) &addr, sizeof(struct sockaddr_in)) == -1) {
@@ -358,10 +348,18 @@ bool get_file(char *error_message)
                                 if (send_ack(GET, 0, false, error_message) == -1)
                                         return false;
                         }
-                        #ifdef DEBUG
-                        else
-                                printf("Received unexpected message\n");
-                        #endif
+
+                        if ((get_sequence_number(recv_header) == 0) && !is_ack(recv_header) && (recv_size - header_size == 0) && is_err(recv_header)) {
+                                
+                                #ifdef DEBUG
+                                printf("[DEBUG] Received error message\n");
+                                #endif
+
+                                close(fd);
+                                remove(path);
+                                snprintf(error_message, ERR_SIZE, "Selected file does not exists");
+                                return false;
+                        }
                 }  
         }
 
@@ -374,7 +372,7 @@ bool get_file(char *error_message)
                 }
 
                 #ifdef DEBUG
-                printf("Received chunk no. %d (DIM. %ld)\n", get_sequence_number(recv_header), recv_size - header_size);
+                printf("[DEBUG] Received chunk no. %d (DIM. %ld)\n", get_sequence_number(recv_header), recv_size - header_size);
                 #endif
 
                 if(get_sequence_number(recv_header) == expected_seq_num) {
@@ -390,12 +388,10 @@ bool get_file(char *error_message)
 
                         if (is_last(recv_header)) {
                                 status = QUIT;
-                                
-                                if (send_ack(LIST, last_acked_seq_num, true, error_message) == -1)
-                                        return false;
 
-                                if (send_ack(LIST, last_acked_seq_num, true, error_message) == -1)
-                                        return false;
+                                for (int i = 0; i < LAST_MESSAGE_LOOP - 1; ++i)                                
+                                        if (send_ack(LIST, last_acked_seq_num, true, error_message) == -1)
+                                                return false;
                         }
 
                 } else {
@@ -407,6 +403,7 @@ bool get_file(char *error_message)
         printf("File succesfully downloaded\nPress return to get back to menu\n");
         getchar();
 
+        close(fd);
         close(sockfd);
         return true;
 }
