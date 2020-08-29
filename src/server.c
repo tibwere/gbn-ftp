@@ -53,18 +53,25 @@ struct worker_info *winfo;
 struct gbn_config *config;
 fd_set all_fds;
 
+
 bool handle_retransmit(long id, char * error_message); 
 ssize_t send_file_chunk(long id, char *error_message);
-ssize_t send_new_port_mess(long id, char *error_message);
+ssize_t lg_send_new_port_mess(long id, char *error_message);
+ssize_t p_send_new_port_mess(long id, char *error_message);
+ssize_t p_send_ack(long id, unsigned int seq_num, bool is_last, const struct sockaddr_in *addr, char *error_message); 
+bool handle_ack_messages(long id, char *error_message);
+void *receiver_routine(void *args);
 void *sender_routine(void *args);
 void exit_server(int status);
 enum app_usages parse_cmd(int argc, char **argv, long *tpsize_ptr);
 int init_socket(unsigned short int port, char *error_message);
 long get_available_worker(long nmemb, const struct sockaddr_in *addr, bool *already_handled_ptr);
 bool start_sender(long index, struct sockaddr_in *client_sockaddr, enum message_type modality, const char *payload, bool *can_open_ptr, char *error_message);
+bool start_receiver(long index, struct sockaddr_in *client_sockaddr, const char *payload, bool *can_open_ptr, char *error_message);
 bool reset_worker_info(int id, bool need_destroy, char *error_message);
 bool init_worker_info(long nmemb, char *error_message);
 bool handle_recv(int id, char *error_message);
+bool dispose_leaked_resources(int tpsize, char *error_message);
 bool acceptance_loop(int acc_socket, long size, char *error_message);
 bool check_installation(void); 
 
@@ -154,7 +161,7 @@ ssize_t send_file_chunk(long id, char *error_message)
         return 0;    
 }
 
-ssize_t send_new_port_mess(long id, char *error_message)
+ssize_t lg_send_new_port_mess(long id, char *error_message)
 {
         gbn_ftp_header_t header;
         struct timespec ts;
@@ -208,6 +215,202 @@ ssize_t send_new_port_mess(long id, char *error_message)
         return true;
 }
 
+ssize_t p_send_new_port_mess(long id, char *error_message)
+{
+        gbn_ftp_header_t send_header, recv_header;
+        int ret;
+        ssize_t wsize;
+        fd_set read_fds, all_fds;
+        struct timeval tv;
+
+        set_err(&send_header, false);
+        set_sequence_number(&send_header, 0);
+        set_message_type(&send_header, PUT);
+        set_last(&send_header, false);
+        set_ack(&send_header, false);
+
+        FD_ZERO(&all_fds);
+        FD_SET(winfo[id].socket, &all_fds);
+
+        do {
+                if ((wsize = gbn_send(winfo[id].socket, send_header, NULL, 0, &winfo[id].client_sockaddr, &winfo[id].cfg)) == -1) {
+                        snprintf(error_message, ERR_SIZE, "Unable to send NEW_PORT message to %ld-th client", id);
+                        return false;
+                }
+
+                #ifdef DEBUG
+                printf("%s NEW PORT segment %ssent\n", winfo[id].id_string, (wsize == 0) ? "not " : "");
+                #endif
+
+                read_fds = all_fds;
+                tv.tv_sec = floor((double) winfo[id].cfg.rto_usec / (double) 1000000);
+                tv.tv_usec =  winfo[id].cfg.rto_usec % 1000000;
+
+                if ((ret = select(winfo[id].socket + 1, &read_fds, NULL, NULL, &tv)) == -1) {
+                        snprintf(error_message, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex_%ld)", id);
+                        return -1;
+                }
+
+                if (ret) {
+
+                        if (gbn_receive(winfo[id].socket, &recv_header, NULL, &winfo[id].client_sockaddr) == -1) {
+                                snprintf(error_message, ERR_SIZE, "Unable to get message from %ld-th client (gbn_receive)", id);
+                                return false;
+                        }
+
+                        winfo[id].status = CONNECTED; 
+                                                       
+                }
+
+        } while (winfo[id].status == REQUEST);
+        
+        return true;
+}
+
+ssize_t p_send_ack(long id, unsigned int seq_num, bool is_last, const struct sockaddr_in *addr, char *error_message)
+{
+        gbn_ftp_header_t header;
+        ssize_t wsize;
+
+        set_sequence_number(&header, seq_num);
+        set_last(&header, is_last);
+        set_ack(&header, true);
+        set_err(&header, false);
+        set_message_type(&header, PUT);
+
+        if ((wsize = gbn_send(winfo[id].socket, header, NULL, 0, addr, config)) == -1)
+                snprintf(error_message, ERR_SIZE, "Unable to send ACK %d to %ld-th client", seq_num, id);
+
+        #ifdef DEBUG
+        printf("%s ACK no. %d %ssent\n", winfo[id].id_string, seq_num, (wsize == 0) ? "not " : "");
+        #endif
+        
+        return wsize;
+}
+
+bool handle_ack_messages(long id, char *error_message)
+{
+        char payload[CHUNK_SIZE];
+        fd_set read_fds, all_fds;
+        int retval;
+        struct timeval tv;
+        gbn_ftp_header_t recv_header;
+        ssize_t recv_size;
+        ssize_t header_size = sizeof(gbn_ftp_header_t);
+        struct sockaddr_in addr;
+
+        FD_ZERO(&all_fds);
+        FD_SET(winfo[id].socket, &all_fds);
+
+        do {
+                read_fds = all_fds;
+                tv.tv_sec = MAX_TO * floor((double) winfo[id].cfg.rto_usec / (double) 1000000);
+                tv.tv_usec =  MAX_TO * winfo[id].cfg.rto_usec % 1000000;
+                memset(&addr, 0x0, sizeof(struct sockaddr_in));
+                
+                if ((retval = select(winfo[id].socket + 1, &read_fds, NULL, NULL, &tv)) == -1) {
+                        snprintf(error_message, ERR_SIZE, "Unable to receive message to %ld-th client (select)", id);
+                        return false;                        
+                } else if (retval) {
+
+                        memset(payload, 0x0, CHUNK_SIZE);
+
+                        if((recv_size = gbn_receive(winfo[id].socket, &recv_header, payload, &addr)) == -1) {
+                                snprintf(error_message, ERR_SIZE, "Unable to receive pkt from server (gbn_receive)");
+                                return false;
+                        }
+
+                        #ifdef DEBUG
+                        printf("%s Received chunk no. %d (DIM. %ld)\n", winfo[id].id_string, get_sequence_number(recv_header), recv_size - header_size);
+                        #endif
+
+                        if(get_sequence_number(recv_header) == winfo[id].expected_seq_num) {
+                                winfo[id].last_acked_seq_num = winfo[id].expected_seq_num;
+
+                                if (write(winfo[id].fd, payload, recv_size - header_size) == -1) {
+                                        snprintf(error_message, ERR_SIZE, "Unable to print out info received from server");
+                                        return false;  
+                                }
+
+                                if (p_send_ack(id, winfo[id].expected_seq_num++, is_last(recv_header), &addr, error_message) == -1)
+                                        return false;
+
+                                if (is_last(recv_header)) {
+                                        winfo[id].status = QUIT;
+
+                                        for (int i = 0; i < LAST_MESSAGE_LOOP - 1; ++i)                                
+                                                if (p_send_ack(id, winfo[id].last_acked_seq_num, true, &addr, error_message) == -1)
+                                                        return false;
+                                }
+
+                        } else {
+                                if (p_send_ack(id, winfo[id].last_acked_seq_num, false, &addr, error_message) == -1)
+                                        return false;
+                        } 
+
+                } else {
+                        winfo[id].status = TIMEOUT;
+                }
+        } while (winfo[id].status == CONNECTED);
+
+        return true;
+}
+
+void *receiver_routine(void *args) 
+{
+        long id = (long) args;
+        char err_mess[ERR_SIZE];
+        bool fail;
+
+        snprintf(winfo[id].id_string, ID_STR_LENGTH, "[Worker no. %ld - Client connected: %s:%d (OP: %d)]", 
+                id, 
+                inet_ntoa((winfo[id].client_sockaddr).sin_addr), 
+                ntohs((winfo[id].client_sockaddr).sin_port),
+                winfo[id].modality);
+
+        do  {
+                fail = false;
+
+                switch (winfo[id].status) {
+
+                        case REQUEST:
+                                if (p_send_new_port_mess(id, err_mess) == -1)
+                                        fail = true;
+  
+                                break;
+
+                        case CONNECTED:
+                                if (!handle_ack_messages(id, err_mess)) 
+                                        fail = true;
+                                
+                                break;
+
+                        case TIMEOUT:
+                                #ifdef DEBUG
+                                printf("%s Maximum wait time expires. Connection aborted!\n", winfo[id].id_string);
+                                #endif
+                                
+                                winfo[id].status = QUIT;
+                                break;
+
+                        default: 
+                                break;
+                }
+
+        } while (winfo[id].status != QUIT || fail);
+
+        if (fail) {
+                perr(err_mess);
+                winfo[id].status = QUIT;
+        }
+
+        #ifdef DEBUG
+        printf("%s is quitting right now\n", winfo[id].id_string);
+        #endif
+
+        pthread_exit(NULL);
+}
+
 void *sender_routine(void *args) 
 {
         long id = (long) args;
@@ -225,10 +428,12 @@ void *sender_routine(void *args)
                 winfo[id].modality);
 
         do  {
+                fail = false;
+
                 switch (winfo[id].status) {
 
                         case REQUEST:
-                                if (send_new_port_mess(id, err_mess) == -1)
+                                if (lg_send_new_port_mess(id, err_mess) == -1)
                                         fail = true;
   
                                 break;
@@ -315,6 +520,7 @@ void *sender_routine(void *args)
                                                         fail = true;
                                                 }
 
+                                                FD_CLR(winfo[id].socket, &all_fds);
                                                 winfo[id].status = QUIT;
 
                                                 if (pthread_mutex_unlock(&winfo[id].mutex)) {
@@ -533,6 +739,40 @@ bool start_sender(long index, struct sockaddr_in *client_sockaddr, enum message_
         return true;
 }
 
+bool start_receiver(long index, struct sockaddr_in *client_sockaddr, const char *payload, bool *can_open_ptr, char *error_message)
+{
+        char path[PATH_SIZE];
+
+        memset(path, 0x0, PATH_SIZE);
+
+        memcpy(&winfo[index].client_sockaddr, client_sockaddr, sizeof(struct sockaddr_in));
+
+        winfo[index].modality = PUT;
+        strncpy(winfo[index].filename, payload, CHUNK_SIZE);
+
+        snprintf(path, PATH_SIZE, "/home/%s/.gbn-ftp-public/%s", getenv("USER"), winfo[index].filename);
+    
+        if ((winfo[index].fd = open(path, O_CREAT | O_EXCL | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) == -1) {
+                if (errno == EEXIST) {
+                        *can_open_ptr = false;
+                        return false;
+                }
+
+                snprintf(error_message, ERR_SIZE, "Unable to retrive requested file for %ld-th connection", index);
+                return false;
+        }
+
+        if ((winfo[index].socket = init_socket(winfo[index].port, error_message)) == -1) 
+                return false;
+
+        if (pthread_create(&winfo[index].tid, NULL, receiver_routine, (void *) index)) {
+                snprintf(error_message, ERR_SIZE, "Unable to spawn worker threads for %ld-th client", index);
+                return false;  
+        }
+
+        return true;
+}
+
 bool reset_worker_info(int id, bool need_destroy, char *error_message)
 {
         if (need_destroy) {
@@ -604,11 +844,8 @@ bool init_worker_info(long nmemb, char *error_message)
 bool handle_recv(int id, char *error_message) 
 {
         gbn_ftp_header_t recv_header;
-        char payload[CHUNK_SIZE];
 
-        memset(payload, 0x0, CHUNK_SIZE);
-
-        if (gbn_receive(winfo[id].socket, &recv_header, payload, &winfo[id].client_sockaddr) == -1) {
+        if (gbn_receive(winfo[id].socket, &recv_header, NULL, &winfo[id].client_sockaddr) == -1) {
                 snprintf(error_message, ERR_SIZE, "Unable to get message from %d-th client (gbn_receive)", id);
                 return false;
         }
@@ -675,11 +912,6 @@ bool handle_recv(int id, char *error_message)
                         
                         FD_CLR(winfo[id].socket, &all_fds);
 
-                        pthread_join(winfo[id].tid, NULL);
-
-                        if (!reset_worker_info(id, true, error_message))
-                                return false;
-
                         #ifdef DEBUG
                         printf("Comunication with %d-th client has expired\n", id);
                         #endif
@@ -711,6 +943,24 @@ bool send_error_message(int acc_socket, enum message_type modality, const struct
         printf("[Main Thread] Error message %ssent\n", (wsize == 0) ? "not " : "");
         #endif
         
+        return true;
+}
+
+bool dispose_leaked_resources(int tpsize, char *error_message)
+{
+        for (int i = 0; i < tpsize; ++i) {
+                if (winfo[i].status == QUIT) {
+                        pthread_join(winfo[i].tid, NULL);
+
+                        if (!reset_worker_info(i, true, error_message))
+                                return false;
+
+                        #ifdef DEBUG
+                        printf("[Main thread] Disposed resources used by %d worker that's terminated\n", i);
+                        #endif
+                }
+        }
+
         return true;
 }
 
@@ -765,18 +1015,33 @@ bool acceptance_loop(int acc_socket, long tpsize, char *error_message)
                                 #endif
 
                                 can_open = true;
-                                if (!start_sender(winfo_index, &addr, get_message_type(header), payload, &can_open, error_message)) {
-                                        if (!can_open) {
-                                                if (!send_error_message(acc_socket, winfo[winfo_index].modality, &addr, error_message))
-                                                        return false; 
-                                        } else {   
-                                                return false;
+                                if (get_message_type(header) != PUT) {
+
+                                        if (!start_sender(winfo_index, &addr, get_message_type(header), payload, &can_open, error_message)) {
+                                                if (!can_open) {
+                                                        if (!send_error_message(acc_socket, winfo[winfo_index].modality, &addr, error_message))
+                                                                return false; 
+                                                } else {   
+                                                        return false;
+                                                }
+                                        } else {
+                                                FD_SET(winfo[winfo_index].socket, &all_fds);
+        
+                                                if (winfo[winfo_index].socket > maxfd) 
+                                                        maxfd = winfo[winfo_index].socket;
                                         }
+
                                 } else {
-                                        FD_SET(winfo[winfo_index].socket, &all_fds);
- 
-                                        if (winfo[winfo_index].socket > maxfd) 
-                                                maxfd = winfo[winfo_index].socket;
+
+                                        if (!start_receiver(winfo_index, &addr, payload, &can_open, error_message)) {
+                                                if (!can_open) {
+                                                        if (!send_error_message(acc_socket, winfo[winfo_index].modality, &addr, error_message))
+                                                                return false; 
+                                                } else {   
+                                                        return false;
+                                                }
+                                        }
+
                                 }
                         }
 
@@ -801,6 +1066,8 @@ bool acceptance_loop(int acc_socket, long tpsize, char *error_message)
                         }
                 }
 
+                if (!dispose_leaked_resources(tpsize, error_message))
+                        return false;
         }
 
         return true;
