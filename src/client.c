@@ -29,17 +29,21 @@
         #define cls() 
 #endif
 
+#define l_request_loop(status_ptr) request_loop(-1, LIST, NULL, status_ptr, NULL)
+#define g_request_loop(writefd, filename, status_ptr, delete_file) request_loop(writefd, GET, filename, status_ptr, delete_file)
+#define p_request_loop(writefd, filename, status_ptr) request_loop(writefd, PUT, filename, status_ptr, NULL)
+
 
 struct put_args {
-        int fd;
-        unsigned int base;
-        unsigned int next_seq_num;
-        unsigned int expected_seq_num;
-        unsigned int last_acked_seq_num;
-        pthread_mutex_t mutex;
-        enum connection_status status;
-        struct timeval start_timer; 
-        pthread_t tid;
+        int fd;                                 /* descrittore del file su cui si deve operare */
+        unsigned int base;                      /* variabile base del protocollo gbn associata alla connessione */
+        unsigned int next_seq_num;              /* variabile next_seq_num del protocollo gbn associata alla connessione */
+        unsigned int expected_seq_num;          /* variabile expected_seq_num del protocollo gbn associata alla connessione */
+        unsigned int last_acked_seq_num;        /* variabile last_acked_seq_num del protocollo gbn associata alla connessione */
+        pthread_mutex_t mutex;                  /* mutex utilizzato per la sincronizzazione fra main thread e servente */
+        enum connection_status status;          /* stato della connessione {FREE, REQUEST, CONNECTED, TIMEOUT, QUIT} */
+        struct timeval start_timer;             /* struttura utilizzata per la gestione del timer */
+        pthread_t tid;                          /* ID del thread servente */
 };
 
 
@@ -54,17 +58,23 @@ struct sockaddr_in request_sockaddr;
 unsigned short int server_port;
 
 
-void exit_client(int status);
+ssize_t send_file_chunk(struct put_args *args);
+bool handle_retransmit(struct put_args *args);
+void *put_sender_routine(void *args);
+void exit_client(int status); 
 enum app_usages parse_cmd(int argc, char **argv, char *address);
-bool set_sockadrr_in(struct sockaddr_in *server_sockaddr, const char *address_string, unsigned short int port, char *error_message);
-ssize_t send_request(enum message_type type, const char *filename, size_t filename_length, char *error_message);
-ssize_t send_ack(enum message_type type, unsigned int seq_num, bool is_last, char *error_message);
-bool list(char *error_message);
-bool get_file(char *error_message);
+bool set_sockadrr_in(struct sockaddr_in *server_sockaddr, const char *address_string, unsigned short int port);
+ssize_t send_request(enum message_type type, const char *filename, size_t filename_length);
+ssize_t send_ack(enum message_type type, unsigned int seq_num, bool is_last);
+bool list(void);
+bool get_file(void);
+struct put_args *init_put_args(void);
+bool dispose_put_args(struct put_args *pa);
+bool put_file(void);
 bool check_installation(void);
 
 
-ssize_t send_file_chunk(struct put_args *args, char *error_message)
+ssize_t send_file_chunk(struct put_args *args)
 {
         gbn_ftp_header_t header;
         char buff[CHUNK_SIZE];
@@ -74,7 +84,7 @@ ssize_t send_file_chunk(struct put_args *args, char *error_message)
         memset(buff, 0x0, CHUNK_SIZE);
 
         if ((rsize = read(args->fd, buff, CHUNK_SIZE)) == -1) {
-                snprintf(error_message, ERR_SIZE, "Unable to read from selected file");
+                perr("{ERROR} [Sender Thread] Unable to read from selected file");
                 return -1;                
         }
 
@@ -92,16 +102,16 @@ ssize_t send_file_chunk(struct put_args *args, char *error_message)
                 }   
 
                 if ((wsize = gbn_send(sockfd, header, buff, rsize, NULL, config)) == -1) {
-                        snprintf(error_message, ERR_SIZE, "Unable to send chunk to server");
+                        perr("{ERROR} [Sender Thread] Unable to send chunk to server");
                         return -1;
                 }
 
                 #ifdef DEBUG
-                printf("[DEBUG] Segment no. %d %ssent\n", get_sequence_number(header), (wsize == 0) ? "not " : "");
+                printf("{DEBUG} [Sender Thread] Segment no. %d %ssent\n", get_sequence_number(header), (wsize == 0) ? "not " : "");
                 #endif
 
                 if (pthread_mutex_lock(&args->mutex)) {
-                        snprintf(error_message, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex)");
+                        perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
                         return -1;
                 }
 
@@ -109,7 +119,7 @@ ssize_t send_file_chunk(struct put_args *args, char *error_message)
                         gettimeofday(&args->start_timer, NULL);
 
                 if (pthread_mutex_unlock(&args->mutex)) {
-                        snprintf(error_message, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex)");
+                        perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
                         return -1;
                 }
 
@@ -119,13 +129,13 @@ ssize_t send_file_chunk(struct put_args *args, char *error_message)
         return 0;    
 }
 
-bool handle_retransmit(struct put_args *args, char * error_message) 
+bool handle_retransmit(struct put_args *args) 
 {
         unsigned int base; 
         unsigned int next_seq_num;
 
         if (pthread_mutex_lock(&args->mutex)) {
-                snprintf(error_message, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex)");
+                perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
                 return -1;
         }
 
@@ -136,14 +146,14 @@ bool handle_retransmit(struct put_args *args, char * error_message)
         gettimeofday(&args->start_timer, NULL);
 
         if (pthread_mutex_unlock(&args->mutex)) {
-                snprintf(error_message, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex)");
+                perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
                 return -1;
         }
 
         next_seq_num = args->next_seq_num;
 
         for (unsigned int i = base; i < next_seq_num; ++i)
-                if (send_file_chunk(args, error_message) == -1)
+                if (send_file_chunk(args) == -1)
                         return false;
 
         return true;
@@ -152,53 +162,49 @@ bool handle_retransmit(struct put_args *args, char * error_message)
 void *put_sender_routine(void *args) 
 {
         struct put_args *arguments = (struct put_args *)args;
-        char err_mess[ERR_SIZE];
         struct timeval tv;
-        bool fail = false;
         bool has_unlocked;
         unsigned short timeout_counter = 0;
         unsigned int last_base_for_timeout = arguments->base;
 
         do  {
-                fail = false;
-
                 switch (arguments->status) {
 
                         case CONNECTED:
 
                                 has_unlocked = false;
                                 if (pthread_mutex_lock(&arguments->mutex)) {
-                                        snprintf(err_mess, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex)");
-                                        fail = true;
+                                        perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
+                                        arguments->status = QUIT;
                                 }
 
                                 if (arguments->next_seq_num < arguments->base + config->N) {
                                         
                                         if (pthread_mutex_unlock(&arguments->mutex)) {
-                                                snprintf(err_mess, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex)");
-                                                fail = true;
+                                                perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
+                                                arguments->status = QUIT;
                                         }
                                         has_unlocked = true;
 
-                                        if (send_file_chunk(arguments, err_mess) == -1)
-                                                fail = true;
+                                        if (send_file_chunk(arguments) == -1)
+                                                arguments->status = QUIT;
                                 }
 
                                 if (!has_unlocked) {
                                         if (pthread_mutex_unlock(&arguments->mutex)) {
-                                                snprintf(err_mess, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex)");
-                                                fail = true;
+                                                perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
+                                                arguments->status = QUIT;
                                         } 
                                         has_unlocked = true;                                      
                                 }
 
                                 has_unlocked = false;
                                 if (pthread_mutex_lock(&arguments->mutex)) {
-                                        snprintf(err_mess, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex)");
-                                        fail = true;
+                                        perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
+                                        arguments->status = QUIT;
                                 } 
 
-                                if (arguments->status != QUIT && !fail) {
+                                if (arguments->status != QUIT) {
                                         gettimeofday(&tv, NULL);
 
                                         if (elapsed_usec(&arguments->start_timer, &tv) >= config->rto_usec)
@@ -207,8 +213,8 @@ void *put_sender_routine(void *args)
                                 }
 
                                 if (pthread_mutex_unlock(&arguments->mutex)) {
-                                        snprintf(err_mess, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex)");
-                                        fail = true;
+                                        perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
+                                        arguments->status = QUIT;
                                 }
                                 has_unlocked = true;
 
@@ -217,59 +223,57 @@ void *put_sender_routine(void *args)
                         case TIMEOUT:
 
                                 #ifdef DEBUG
-                                printf("[DEBUG] Timeout event (%d)\n", arguments->base);
+                                printf("{DEBUG} [Sender Thread] Timeout event (%d)\n", arguments->base);
                                 #endif       
 
                                 has_unlocked = false;
                                 if (pthread_mutex_lock(&arguments->mutex)) {
-                                        snprintf(err_mess, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex)");
-                                        fail = true;
+                                        perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
+                                        arguments->status = QUIT;
                                 }
 
                                 if (arguments->base == last_base_for_timeout) {
                                         
                                         if (pthread_mutex_unlock(&arguments->mutex)) {
-                                                snprintf(err_mess, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex)");
-                                                fail = true;
+                                                perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
+                                                arguments->status = QUIT;
                                         }
                                         has_unlocked = true;
 
                                         if (timeout_counter < MAX_TO) {
-                                                if (!handle_retransmit(arguments, err_mess))
-                                                        fail = true;
+                                                if (!handle_retransmit(arguments))
+                                                        arguments->status = QUIT;
                                         
                                         } else  {
 
+                                                #ifdef DEBUG
+                                                printf("{DEBUG} [Sender Thread] Maximum number of timeout reached for %d, abort\n", arguments->base);
+                                                #endif
+
                                                 has_unlocked = false;
-                                                if (pthread_mutex_lock(&arguments->mutex)) {
-                                                        snprintf(err_mess, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex)");
-                                                        fail = true;
-                                                }
+                                                if (pthread_mutex_lock(&arguments->mutex))
+                                                        perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
 
                                                 arguments->status = QUIT;
 
-                                                if (pthread_mutex_unlock(&arguments->mutex)) {
-                                                        snprintf(err_mess, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex)");
-                                                        fail = true;
-                                                }
+                                                if (pthread_mutex_unlock(&arguments->mutex))
+                                                        perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
+
                                                 has_unlocked = true;        
                                         }
-                                                
-
                                         ++timeout_counter;
                                 } else {
 
                                         if (pthread_mutex_unlock(&arguments->mutex)) {
-                                                snprintf(err_mess, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex)");
-                                                fail = true;
+                                                perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
+                                                arguments->status = QUIT;
                                         }
                                         has_unlocked = true;
 
                                         timeout_counter = 1;
                                         
-                                        if (!handle_retransmit(arguments, err_mess)) {
-                                                fail = true;
-                                        }
+                                        if (!handle_retransmit(arguments))
+                                                arguments->status = QUIT;
                                 }
 
                                 break;
@@ -278,20 +282,15 @@ void *put_sender_routine(void *args)
                                 break;
                 }
 
-        } while (arguments->status != QUIT || fail);
+        } while (arguments->status != QUIT);
 
         if (!has_unlocked) {
-                if (pthread_mutex_unlock(&arguments->mutex)) {
-                        snprintf(err_mess, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex)");
-                        fail = true;
-                }                
+                if (pthread_mutex_unlock(&arguments->mutex))
+                        perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");               
         }
 
-        if (fail)
-                perr(err_mess);
-
         #ifdef DEBUG
-        printf("[DEBUG] Sender worker is quitting right now\n");
+        printf("{DEBUG} [Sender Thread] is quitting right now\n");
         #endif
 
         pthread_exit(NULL);
@@ -362,24 +361,27 @@ enum app_usages parse_cmd(int argc, char **argv, char *address)
         return (valid_cmd) ? STANDARD : ERROR;
 }
 
-bool set_sockadrr_in(struct sockaddr_in *server_sockaddr, const char *address_string, unsigned short int port, char *error_message)
+bool set_sockadrr_in(struct sockaddr_in *server_sockaddr, const char *address_string, unsigned short int port)
 {
         memset(server_sockaddr, 0x0, sizeof(struct sockaddr_in));
 	server_sockaddr->sin_family = AF_INET;
 	server_sockaddr->sin_port = htons(port);
         
         if (inet_pton(AF_INET, address_string, &server_sockaddr->sin_addr) <= 0) {
-                snprintf(error_message, ERR_SIZE, "Unable to convert address from string to internal logical representation"); 
+                perr("{ERROR} [Main Thread] Unable to convert address from string to internal logical representation"); 
                 return false;
         } 
 
         return true;
 }
 
-ssize_t send_request(enum message_type type, const char *filename, size_t filename_length, char *error_message)
+ssize_t send_request(enum message_type type, const char *filename, size_t filename_length)
 {
         gbn_ftp_header_t header;
         ssize_t wsize;
+        char error_message[ERR_SIZE];
+
+        memset(error_message, 0x0, ERR_SIZE);
 
         set_sequence_number(&header, 0);
         set_last(&header, true);
@@ -387,63 +389,63 @@ ssize_t send_request(enum message_type type, const char *filename, size_t filena
         set_ack(&header, false);
         set_message_type(&header, type);
 
-        if ((wsize = gbn_send(sockfd, header, filename, filename_length, &request_sockaddr, config)) == -1)
-                snprintf(error_message, ERR_SIZE, "Unable to send request command to server (OP %d)", type);
+        if ((wsize = gbn_send(sockfd, header, filename, filename_length, &request_sockaddr, config)) == -1) {
+                snprintf(error_message, ERR_SIZE, "{ERROR} [Main Thread] Unable to send request command to server (OP %d)", type);
+                perr(error_message);
+                return -1;
+        }
 
         #ifdef DEBUG
-        printf("[DEBUG] Request segment %ssent\n", (wsize == 0) ? "not " : "");
+        printf("{DEBUG} [Main Thread] Request segment %ssent\n", (wsize == 0) ? "not " : "");
         #endif
         
         return wsize;
 }
 
-ssize_t send_ack(enum message_type type, unsigned int seq_num, bool is_last, char *error_message)
+ssize_t send_ack(enum message_type type, unsigned int seq_num, bool is_last)
 {
         gbn_ftp_header_t header;
         ssize_t wsize;
+        char error_message[ERR_SIZE];
+
+        memset(error_message, 0x0, ERR_SIZE);
 
         set_sequence_number(&header, seq_num);
         set_last(&header, is_last);
         set_ack(&header, true);
         set_message_type(&header, type);
 
-        if ((wsize = gbn_send(sockfd, header, NULL, 0, NULL, config)) == -1)
-                snprintf(error_message, ERR_SIZE, "Unable to send ack to server (OP %d)", type);
+        if ((wsize = gbn_send(sockfd, header, NULL, 0, NULL, config)) == -1) {
+                snprintf(error_message, ERR_SIZE, "{ERROR} [Main Thread] Unable to send ack to server (OP %d)", type);
+                perr(error_message);
+                return -1;
+        }
 
         #ifdef DEBUG
-        printf("[DEBUG] ACK no. %d %ssent\n", seq_num, (wsize == 0) ? "not " : "");
+        printf("{DEBUG} [Main Thread] ACK no. %d %ssent\n", seq_num, (wsize == 0) ? "not " : "");
         #endif
         
         return wsize;
 }
 
-bool list(char *error_message) 
+bool request_loop(int writefd, enum message_type type, const char *filename, enum connection_status *status_ptr, bool *delete_file)
 {
-        unsigned int expected_seq_num, last_acked_seq_num;
-        enum connection_status status;
-        fd_set read_fds, std_fds;
-        int retval;
         struct timeval tv;
-        gbn_ftp_header_t recv_header;
-        char payload[CHUNK_SIZE];
+        int retval;
         ssize_t recv_size;
-        size_t header_size = sizeof(gbn_ftp_header_t);
+        gbn_ftp_header_t recv_header;
         struct sockaddr_in addr;
-
-        expected_seq_num = 1;
-        last_acked_seq_num = 0;
-        status = REQUEST;
-
-        if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
-                snprintf(error_message, ERR_SIZE, "Unable to get socket file descriptor (REQUEST)");
-                return false;
-        }
+        size_t header_size = sizeof(gbn_ftp_header_t);
+        fd_set read_fds, std_fds;
 
         FD_ZERO(&std_fds);
         FD_SET(sockfd, &std_fds);
 
-        while (status == REQUEST) {
-                if (send_request(LIST, NULL, 0, error_message) == -1) 
+        memset(&addr, 0x0, sizeof(struct sockaddr_in));
+
+        while(*status_ptr == REQUEST) {
+
+                if (send_request(type, filename, (filename) ? strlen(filename) : 0) == -1) 
                         return false; 
 
                 read_fds = std_fds;
@@ -451,75 +453,196 @@ bool list(char *error_message)
                 tv.tv_usec = config->rto_usec % 1000000;
 
                 if ((retval = select(sockfd + 1, &read_fds, NULL, NULL, &tv)) == -1) {
-                        snprintf(error_message, ERR_SIZE, "Unable to get response from server (NEW_PORT)");
+                        perr("{ERROR} [Main Thread] Unable to get NEW_PORT message from server (select)");
                         return false;
                 }
 
                 if (retval) {
-                        status = CONNECTED;
 
-                        if((recv_size = gbn_receive(sockfd, &recv_header, payload, &addr)) == -1) {
-                                snprintf(error_message, ERR_SIZE, "Unable to receive pkt from server (gbn_receive)");
+                        if ((recv_size = gbn_receive(sockfd, &recv_header, NULL, &addr)) == -1) {
+                                perr("{ERROR} [Main Thread] Unable to get NEW_PORT message from server (gbn_receive)");
                                 return false;
                         }
 
-                        if ((get_sequence_number(recv_header) == 0) && !is_ack(recv_header) && (recv_size - header_size == 0)) {
+                        if ((get_sequence_number(recv_header) == 0) && !is_ack(recv_header) && (recv_size - header_size == 0) && !is_err(recv_header)) {
+
+                                *status_ptr = CONNECTED;
                                 
                                 #ifdef DEBUG
-                                printf("[DEBUG] Received NEW PORT message\n");
+                                printf("{DEBUG} [Main Thread] Received NEW PORT message\n");
                                 #endif
 
                                 if (connect(sockfd, (struct sockaddr *) &addr, sizeof(struct sockaddr_in)) == -1) {
-                                        snprintf(error_message, ERR_SIZE, "Connection to server failed");
+                                        perr("{ERROR} [Main Thread] Connection to server failed");
                                         return false;
                                 }
-                                if (send_ack(LIST, 0, false, error_message) == -1)
+                                if (send_ack(type, 0, false) == -1)
                                         return false;
                         }
-                }  
+
+                        if ((get_sequence_number(recv_header) == 0) && !is_ack(recv_header) && (recv_size - header_size == 0) && is_err(recv_header)) {
+                                
+                                #ifdef DEBUG
+                                printf("{DEBUG} [Main Thread] Received error message\n");
+                                #endif
+
+                                if (writefd != -1)
+                                        close(writefd);
+                                
+                                *delete_file = true;
+
+                                fprintf(stderr, "{ERROR} [Main Thread] Selected file does not exists on server\n");
+                                return false;
+                        }
+                }
         }
 
-        cls();
-        printf("AVAILABLE FILE ON SERVER\n\n");
+        return true;
+}
 
-        while (status == CONNECTED) {
+bool lg_connect_loop(int writefd, enum message_type type, enum connection_status *status_ptr)
+{
+        unsigned int expected_seq_num, last_acked_seq_num;
+        gbn_ftp_header_t recv_header;
+        char payload[CHUNK_SIZE];
+        ssize_t recv_size;
+        size_t header_size = sizeof(gbn_ftp_header_t);
+
+        expected_seq_num = 1;
+        last_acked_seq_num = 0;
+
+        while (*status_ptr == CONNECTED) {
                 memset(payload, 0x0, CHUNK_SIZE);
 
-                if((recv_size = gbn_receive(sockfd, &recv_header, payload, &addr)) == -1) {
-                        snprintf(error_message, ERR_SIZE, "Unable to receive pkt from server (gbn_receive)");
+                if((recv_size = gbn_receive(sockfd, &recv_header, payload, NULL)) == -1) {
+                        perr("{ERROR} [Main Thread] Unable to receive pkt from server (gbn_receive)");
                         return false;
                 }
 
                 #ifdef DEBUG
-                printf("[DEBUG] Received chunk no. %d (DIM. %ld)\n", get_sequence_number(recv_header), recv_size - header_size);
+                printf("{DEBUG} [Main Thread] Received chunk no. %d (DIM. %ld)\n", get_sequence_number(recv_header), recv_size - header_size);
                 #endif
 
                 if(get_sequence_number(recv_header) == expected_seq_num) {
+
                         last_acked_seq_num = expected_seq_num;
 
-                        if (write(STDIN_FILENO, payload, recv_size - header_size) == -1) {
-                                snprintf(error_message, ERR_SIZE, "Unable to print out info received from server");
+                        if (write(writefd, payload, recv_size - header_size) == -1) {
+                                perr("{ERROR} [Main Thread] Unable to print out info received from server");
                                 return false;  
                         }
 
-                        if (send_ack(LIST, expected_seq_num++, is_last(recv_header), error_message) == -1)
+                        if (send_ack(type, expected_seq_num++, is_last(recv_header)) == -1)
                                 return false;
 
                         if (is_last(recv_header)) {
-                                status = QUIT;
+                                *status_ptr = QUIT;
                         
                                 // Al termine invio 4 ACK per aumentare la probabilità di ricezione da parte del server
                                 for (int i = 0; i < LAST_MESSAGE_LOOP - 1; ++i) {
-                                        if (send_ack(LIST, last_acked_seq_num, true, error_message) == -1)
+                                        if (send_ack(type, last_acked_seq_num, true) == -1)
                                                 return false;
                                 }
                         }
 
                 } else {
-                        if (send_ack(LIST, last_acked_seq_num, false, error_message) == -1)
+                        if (send_ack(type, last_acked_seq_num, false) == -1)
                                 return false;
-                }                        
+                } 
         }
+
+        return true;
+}
+
+bool p_connect_loop(struct put_args *args)
+{
+        gbn_ftp_header_t recv_header;
+
+        while (args->status == CONNECTED) {
+
+                if (gbn_receive(sockfd, &recv_header, NULL, NULL) == -1) {
+                        perr("{ERROR} [Main Thread] Unable to get ACK message from server");
+                        return false;
+                }
+
+                if(is_ack(recv_header)) {
+
+                        #ifdef DEBUG
+                        printf("{DEBUG} [Main Thread] ACK no. %d received\n", get_sequence_number(recv_header));
+                        #endif
+
+                        if (get_sequence_number(recv_header) >= args->base) {
+
+                                if (pthread_mutex_lock(&args->mutex)) {
+                                        perr("{ERROR} [Main Thread] Syncronization protocol for worker threads broken (worker_mutex)");
+                                        return false;
+                                }
+
+                                args->base = get_sequence_number(recv_header) + 1;
+
+                                if (pthread_mutex_unlock(&args->mutex)) {
+                                        perr("{ERROR} [Main Thread] Syncronization protocol for worker threads broken (worker_mutex)");
+                                        return false;
+                                }
+                        }
+
+                        if (pthread_mutex_lock(&args->mutex)) {
+                                perr("{ERROR} [Main Thread] Syncronization protocol for worker threads broken (worker_mutex)");
+                                return false;
+                        }
+
+                        if (args->base == args->next_seq_num)
+                                memset(&args->start_timer, 0x0, sizeof(struct timeval));
+                        else    
+                                gettimeofday(&args->start_timer, NULL);
+
+
+                        if (pthread_mutex_unlock(&args->mutex)) {
+                                perr("{ERROR} [Main Thread] Syncronization protocol for worker threads broken (worker_mutex)");
+                                return false;
+                        }
+
+                        if (is_last(recv_header)) {
+
+                                if (pthread_mutex_lock(&args->mutex)) {
+                                        perr("{ERROR} [Main Thread] Syncronization protocol for worker threads broken (worker_mutex)");
+                                        return false;
+                                }
+
+                                args->status = QUIT;
+
+                                if (pthread_mutex_unlock(&args->mutex)) {
+                                        perr("{ERROR} [Main Thread] Syncronization protocol for worker threads broken (worker_mutex)");
+                                        return false;
+                                }
+                                
+                                #ifdef DEBUG
+                                printf("{DEBUG} [Main Thread] Comunication with server has expired\n");
+                                #endif
+                        } 
+                }
+        }
+
+        return true;
+}
+
+bool list(void) 
+{
+        enum connection_status status = REQUEST;
+
+        if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+                perr("{ERROR} [Main Thread] Unable to get socket file descriptor (REQUEST)");
+                return false;
+        }
+
+        if (!l_request_loop(&status))
+                return false;
+
+        cls();
+        printf("AVAILABLE FILE ON SERVER\n\n");
+
+        if (!lg_connect_loop(STDIN_FILENO, LIST, &status))
+                return false;
 
         printf("Press any key to get back to menu\n");
         getchar();
@@ -528,24 +651,14 @@ bool list(char *error_message)
         return true;
 }
 
-bool get_file(char *error_message) 
+bool get_file(void) 
 {
-        unsigned int expected_seq_num, last_acked_seq_num;
         enum connection_status status;
-        fd_set read_fds, std_fds;
-        int retval;
-        struct timeval tv;
-        gbn_ftp_header_t recv_header;
-        char payload[CHUNK_SIZE];
-        ssize_t recv_size;
-        size_t header_size = sizeof(gbn_ftp_header_t);
-        struct sockaddr_in addr;
         int fd;
         char filename[CHUNK_SIZE];
         char path[PATH_SIZE];
+        bool delete_file = false;
 
-        expected_seq_num = 1;
-        last_acked_seq_num = 0;
         status = REQUEST;
 
         memset(path, 0x0, PATH_SIZE);
@@ -560,103 +673,23 @@ bool get_file(char *error_message)
         snprintf(path, PATH_SIZE, "/home/%s/.gbn-ftp-download/%s", getenv("USER"), filename);
 
         if((fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) == -1) {
-                snprintf(error_message, ERR_SIZE, "Unable to create file");
+                perr("{ERROR} [Main Thread] Unable to create a local copy of remote file");
                 return false;
         } 
 
         if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
-                snprintf(error_message, ERR_SIZE, "Unable to get socket file descriptor (REQUEST)");
+                perr("{ERROR} [Main Thread] Unable to get socket file descriptor (REQUEST)");
                 return false;
         }
 
-        FD_ZERO(&std_fds);
-        FD_SET(sockfd, &std_fds);
+        if (!g_request_loop(fd, filename, &status, &delete_file))
+                return false;
 
-        while (status == REQUEST) {
-                if (send_request(GET, filename, strlen(filename), error_message) == -1) 
-                        return false; 
+        if (delete_file)
+                remove(path);
 
-                read_fds = std_fds;
-                tv.tv_sec = floor((double) config->rto_usec / (double) 1000000);
-                tv.tv_usec = config->rto_usec % 1000000;
-
-                if ((retval = select(sockfd + 1, &read_fds, NULL, NULL, &tv)) == -1) {
-                        snprintf(error_message, ERR_SIZE, "Unable to get response from server (NEW_PORT)");
-                        return false;
-                }
-
-                if (retval) {
-                        status = CONNECTED;
-
-                        if((recv_size = gbn_receive(sockfd, &recv_header, payload, &addr)) == -1) {
-                                snprintf(error_message, ERR_SIZE, "Unable to receive pkt from server (gbn_receive)");
-                                return false;
-                        }
-
-                        if ((get_sequence_number(recv_header) == 0) && !is_ack(recv_header) && (recv_size - header_size == 0) && !is_err(recv_header)) {
-                                
-                                #ifdef DEBUG
-                                printf("[DEBUG] Received NEW PORT message\n");
-                                #endif
-
-                                if (connect(sockfd, (struct sockaddr *) &addr, sizeof(struct sockaddr_in)) == -1) {
-                                        snprintf(error_message, ERR_SIZE, "Connection to server failed");
-                                        return false;
-                                }
-                                if (send_ack(GET, 0, false, error_message) == -1)
-                                        return false;
-                        }
-
-                        if ((get_sequence_number(recv_header) == 0) && !is_ack(recv_header) && (recv_size - header_size == 0) && is_err(recv_header)) {
-                                
-                                #ifdef DEBUG
-                                printf("[DEBUG] Received error message\n");
-                                #endif
-
-                                close(fd);
-                                remove(path);
-                                snprintf(error_message, ERR_SIZE, "Selected file does not exists");
-                                return false;
-                        }
-                }  
-        }
-
-        while (status == CONNECTED) {
-                memset(payload, 0x0, CHUNK_SIZE);
-
-                if((recv_size = gbn_receive(sockfd, &recv_header, payload, &addr)) == -1) {
-                        snprintf(error_message, ERR_SIZE, "Unable to receive pkt from server (gbn_receive)");
-                        return false;
-                }
-
-                #ifdef DEBUG
-                printf("[DEBUG] Received chunk no. %d (DIM. %ld)\n", get_sequence_number(recv_header), recv_size - header_size);
-                #endif
-
-                if(get_sequence_number(recv_header) == expected_seq_num) {
-                        last_acked_seq_num = expected_seq_num;
-
-                        if (write(fd, payload, recv_size - header_size) == -1) {
-                                snprintf(error_message, ERR_SIZE, "Unable to print out info received from server");
-                                return false;  
-                        }
-
-                        if (send_ack(GET, expected_seq_num++, is_last(recv_header), error_message) == -1)
-                                return false;
-
-                        if (is_last(recv_header)) {
-                                status = QUIT;
-
-                                for (int i = 0; i < LAST_MESSAGE_LOOP - 1; ++i)                                
-                                        if (send_ack(GET, last_acked_seq_num, true, error_message) == -1)
-                                                return false;
-                        }
-
-                } else {
-                        if (send_ack(GET, last_acked_seq_num, false, error_message) == -1)
-                                return false;
-                }
-        }
+        if (!lg_connect_loop(fd, GET, &status))
+                return false;
 
         printf("File succesfully downloaded\nPress return to get back to menu\n");
         getchar();
@@ -670,13 +703,17 @@ struct put_args *init_put_args(void)
 {
         struct put_args *pa;
 
-        if ((pa = malloc(sizeof(struct put_args))) == NULL)
+        if ((pa = malloc(sizeof(struct put_args))) == NULL) {
+                perr("{ERROR} [Main Thread] Unable to allocate metadata for PUT operation (malloc)");
                 return NULL;
+        }
 
         memset(pa, 0x0, sizeof(struct put_args));
 
-        if (pthread_mutex_init(&pa->mutex, NULL)) 
+        if (pthread_mutex_init(&pa->mutex, NULL)) {
+                perr("{ERROR} [Main Thread] Unable to allocate metadata for PUT operation (pthread_mutex_init)");
                 return NULL;
+        }
         
         pa->fd = -1;
         pa->base = 1;
@@ -690,8 +727,10 @@ struct put_args *init_put_args(void)
 
 bool dispose_put_args(struct put_args *pa)
 {
-        if (pthread_mutex_destroy(&pa->mutex)) 
+        if (pthread_mutex_destroy(&pa->mutex)) {
+                perr("{ERROR} [Main Thread] unable to free metadata used for PUT operation");
                 return false;
+        }
 
         close(pa->fd);
         free(pa);
@@ -699,17 +738,9 @@ bool dispose_put_args(struct put_args *pa)
         return true;
 }
 
-bool put_file(char *error_message) 
+bool put_file(void) 
 {
-        fd_set read_fds, std_fds;
-        int retval;
-        struct timeval tv;
-        gbn_ftp_header_t recv_header;
-        char payload[CHUNK_SIZE];
-        ssize_t recv_size;
-        size_t header_size = sizeof(gbn_ftp_header_t);
         size_t filename_size;
-        struct sockaddr_in addr;
         char filename[CHUNK_SIZE];
         char path[PATH_SIZE];
         struct put_args *args;
@@ -722,150 +753,32 @@ bool put_file(char *error_message)
         cls();
         printf("Which file do you want to upload to server (full path)? ");
         fflush(stdout);
-        retval = get_input(PATH_SIZE, path, true);
+        get_input(PATH_SIZE, path, true);
 
         printf("Choose the name for the upload (default: %s)? ", basename(path));
         fflush(stdout);
         filename_size = get_input(CHUNK_SIZE, filename, false);
 
         if((args->fd = open(path, O_RDONLY)) == -1) {
-                snprintf(error_message, ERR_SIZE, "Unable to open chosen file");
+                perr("{ERROR} [Main Thread] Unable to open chosen file");
                 return false;
         } 
 
         if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
-                snprintf(error_message, ERR_SIZE, "Unable to get socket file descriptor (REQUEST)");
+                perr("{ERROR [Main Thread] Unable to get socket file descriptor (REQUEST)");
                 return false;
         }
 
-        FD_ZERO(&std_fds);
-        FD_SET(sockfd, &std_fds);
+        if (!p_request_loop(args->fd, (filename_size) ? filename : basename(path), &args->status))
+                return false;
 
-        while (args->status == REQUEST) {
-
-                if (filename_size) {
-                        if (send_request(PUT, filename, strlen(filename), error_message) == -1) 
-                                return false; 
-
-                } else {
-                        if (send_request(PUT, basename(path), strlen(basename(path)), error_message) == -1) 
-                                return false; 
-                }
-
-                read_fds = std_fds;
-                tv.tv_sec = floor((double) config->rto_usec / (double) 1000000);
-                tv.tv_usec = config->rto_usec % 1000000;
-
-                if ((retval = select(sockfd + 1, &read_fds, NULL, NULL, &tv)) == -1) {
-                        snprintf(error_message, ERR_SIZE, "Unable to get response from server (NEW_PORT)");
-                        return false;
-                }
-
-                if (retval) {
-                        args->status = CONNECTED;
-
-                        if((recv_size = gbn_receive(sockfd, &recv_header, payload, &addr)) == -1) {
-                                snprintf(error_message, ERR_SIZE, "Unable to receive pkt from server (gbn_receive)");
-                                return false;
-                        }
-
-                        if ((get_sequence_number(recv_header) == 0) && !is_ack(recv_header) && (recv_size - header_size == 0) && !is_err(recv_header)) {
-                                
-                                #ifdef DEBUG
-                                printf("[DEBUG] Received NEW PORT message\n");
-                                #endif
-
-                                if (connect(sockfd, (struct sockaddr *) &addr, sizeof(struct sockaddr_in)) == -1) {
-                                        snprintf(error_message, ERR_SIZE, "Connection to server failed");
-                                        return false;
-                                }
-
-                                if (send_ack(PUT, 0, false, error_message) == -1)
-                                        return false;
-
-                                if (pthread_create(&args->tid, NULL, put_sender_routine, args)) {
-                                        snprintf(error_message, ERR_SIZE, "Unable to spawn sender thread");
-                                        return false;
-                                }
-                        }
-
-                        if ((get_sequence_number(recv_header) == 0) && !is_ack(recv_header) && (recv_size - header_size == 0) && is_err(recv_header)) {
-                                
-                                #ifdef DEBUG
-                                printf("[DEBUG] Received error message\n");
-                                #endif
-
-                                close(args->fd);
-                                snprintf(error_message, ERR_SIZE, "Selected file already exists on server");
-                                return false;
-                        }
-                }  
+        if (pthread_create(&args->tid, NULL, put_sender_routine, args)) {
+                perr("{ERROR} [Main Thread] Unable to spawn sender thread");
+                return false;
         }
 
-        while (args->status == CONNECTED) {
-
-                if (gbn_receive(sockfd, &recv_header, NULL, NULL) == -1) {
-                        snprintf(error_message, ERR_SIZE, "Unable to get message from server");
-                        return false;
-                }
-
-                if(is_ack(recv_header)) {
-
-                        #ifdef DEBUG
-                        printf("[DEBUG] ACK no. %d received\n", get_sequence_number(recv_header));
-                        #endif
-
-                        if (get_sequence_number(recv_header) >= args->base) {
-
-                                if (pthread_mutex_lock(&args->mutex)) {
-                                        snprintf(error_message, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex)");
-                                        return false;
-                                }
-
-                                args->base = get_sequence_number(recv_header) + 1;
-
-                                if (pthread_mutex_unlock(&args->mutex)) {
-                                        snprintf(error_message, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex)");
-                                        return false;
-                                }
-                        }
-
-                        if (pthread_mutex_lock(&args->mutex)) {
-                                snprintf(error_message, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex)");
-                                return false;
-                        }
-
-                        if (args->base == args->next_seq_num)
-                                memset(&args->start_timer, 0x0, sizeof(struct timeval));
-                        else    
-                                gettimeofday(&args->start_timer, NULL);
-
-
-                        if (pthread_mutex_unlock(&args->mutex)) {
-                                snprintf(error_message, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex)");
-                                return false;
-                        }
-
-                        if (is_last(recv_header)) {
-
-                                if (pthread_mutex_lock(&args->mutex)) {
-                                        snprintf(error_message, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex)");
-                                        return false;
-                                }
-
-                                args->status = QUIT;
-
-                                if (pthread_mutex_unlock(&args->mutex)) {
-                                        snprintf(error_message, ERR_SIZE, "Syncronization protocol for worker threads broken (worker_mutex)");
-                                        return false;
-                                }
-                                
-                                #ifdef DEBUG
-                                printf("[DEBUG] Comunication with server has expired\n");
-                                #endif
-                        } 
-                }
-        }
+        if (!p_connect_loop(args))
+                return false;
 
         printf("File succesfully uploaded\nPress return to get back to menu\n");
         getchar();
@@ -894,7 +807,10 @@ int main(int argc, char **argv)
         char address_string[ADDRESS_STRING_LENGTH];
         enum app_usages modality;
         char choice;
-        char err_mess[ERR_SIZE];
+
+        #ifdef DEBUG
+        printf("*** DEBUG MODE ***\n\n\n");
+        #endif
 
         if (!check_installation()) {
                 fprintf(stderr, "Client not installed yet!\n\nPlease run the following command:\n\tsh /path/to/script/install-client.sh\n");
@@ -904,7 +820,6 @@ int main(int argc, char **argv)
         srand(time(0));
 
         memset(address_string, 0x0, ADDRESS_STRING_LENGTH);
-        memset(err_mess, 0x0, ERR_SIZE);
         
         if((config = init_configurations()) == NULL) {
                 perr("Unable to load default configurations for server");
@@ -944,10 +859,8 @@ int main(int argc, char **argv)
                         abort();        
         }
 
-        if (!set_sockadrr_in(&request_sockaddr, address_string, server_port, err_mess)) {
-                perr(err_mess);
+        if (!set_sockadrr_in(&request_sockaddr, address_string, server_port))
                 exit_client(EXIT_FAILURE);
-        }
 
         do {
                 cls();
@@ -962,22 +875,19 @@ int main(int argc, char **argv)
 
                 switch (choice) {
                         case 'L': 
-                                if (!list(err_mess)) {
-                                        perr(err_mess);
+                                if (!list())
                                         choice = 'Q';
-                                }       
+                                
                                 break;
                         case 'P': 
-                                if (!put_file(err_mess)) {
-                                        perr(err_mess);
+                                if (!put_file())
                                         choice = 'Q';
-                                }       
+                                     
                                 break;
                         case 'G':
-                                if (!get_file(err_mess)) {
-                                        perr(err_mess);
+                                if (!get_file())
                                         choice = 'Q';
-                                }
+                                
                                 break;                                
                         case 'Q': 
                                 printf("Bye bye\n\n");

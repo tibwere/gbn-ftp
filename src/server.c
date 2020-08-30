@@ -37,9 +37,9 @@ struct worker_info {
         unsigned int next_seq_num;                      /* variabile next_seq_num del protocollo gbn associata alla connessione */                 
         unsigned int expected_seq_num;                  /* variabile expected_seq_num del protocollo gbn associata alla connessione */
         unsigned int last_acked_seq_num;                /* variabile last_acked_seq_num del protocollo gbn associata alla connessione */
-        struct timeval start_timer;                     /* struttura utilizzata per la gestione del timer*/
+        struct timeval start_timer;                     /* struttura utilizzata per la gestione del timer */
         struct gbn_config cfg;                          /* struttura contenente info relative alla finestra e all'entità del timeout */
-        pthread_t tid;                                  /* ID del thread servente*/
+        pthread_t tid;                                  /* ID del thread servent e*/
         int fd;                                         /* descrittore del file su cui si deve operare */
 };
 
@@ -430,7 +430,7 @@ void *receiver_routine(void *args)
         } while (winfo[id].status != QUIT);
 
         #ifdef DEBUG
-        printf("%s is quitting right now\n", winfo[id].id_string);
+        printf("{DEBUG} %s is quitting right now\n", winfo[id].id_string);
         #endif
 
         pthread_exit(NULL);
@@ -520,7 +520,7 @@ void *sender_routine(void *args)
                         case TIMEOUT:
 
                                 #ifdef DEBUG
-                                printf("%s Timeout event (%d)\n", winfo[id].id_string, winfo[id].base);
+                                printf("{DEBUG} %s Timeout event (%d)\n", winfo[id].id_string, winfo[id].base);
                                 #endif       
 
                                 has_unlocked = false;
@@ -545,11 +545,14 @@ void *sender_routine(void *args)
                                         
                                         } else  {
 
+                                                #ifdef DEBUG
+                                                printf("{DEBUG} %s Maximum number of timeout reached for %d, abort\n", winfo[id].id_string, winfo[id].base);
+                                                #endif
+
                                                 has_unlocked = false;
                                                 if (pthread_mutex_lock(&winfo[id].mutex)) {
                                                         snprintf(err_mess, ERR_SIZE, "{ERROR} %s Syncronization protocol for worker threads broken (worker_mutex)", winfo[id].id_string);
                                                         perr(err_mess);
-                                                        winfo[id].status = QUIT;
                                                 }
 
                                                 FD_CLR(winfo[id].socket, &all_fds);
@@ -558,7 +561,6 @@ void *sender_routine(void *args)
                                                 if (pthread_mutex_unlock(&winfo[id].mutex)) {
                                                         snprintf(err_mess, ERR_SIZE, "{ERROR} %s Syncronization protocol for worker threads broken (worker_mutex)", winfo[id].id_string);
                                                         perr(err_mess);
-                                                        winfo[id].status = QUIT;
                                                 }
                                                 has_unlocked = true;        
                                         }
@@ -596,7 +598,7 @@ void *sender_routine(void *args)
         }
 
         #ifdef DEBUG
-        printf("%s is quitting right now\n", winfo[id].id_string);
+        printf("{DEBUG} %s is quitting right now\n", winfo[id].id_string);
         #endif
 
         pthread_exit(NULL);
