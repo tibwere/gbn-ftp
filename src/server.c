@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <math.h>
 #include <errno.h>
+#include <signal.h>
 
 #include "gbnftp.h" 
 #include "common.h"
@@ -51,35 +52,128 @@ extern char *optarg;
 extern int opterr;
 
 
+int acceptance_sockfd;
 unsigned short int acceptance_port;
 struct worker_info *winfo;
 struct gbn_config *config;
 fd_set all_fds;
 pthread_rwlock_t tmp_ls_rwlock;
+sigset_t t_set;
+long concurrenty_connections;
 
 
+bool setup_signals(void);
 bool handle_retransmit(long id); 
 ssize_t send_file_chunk(long id);
 ssize_t lg_send_new_port_mess(long id);
 ssize_t p_send_new_port_mess(long id);
 ssize_t p_send_ack(long id, unsigned int seq_num, bool is_last); 
+bool update_tmp_ls_file(int id);
 bool handle_ack_messages(long id);
 void *receiver_routine(void *args);
 void *sender_routine(void *args);
 void exit_server(int status);
-enum app_usages parse_cmd(int argc, char **argv, long *tpsize_ptr);
+enum app_usages parse_cmd(int argc, char **argv);
 int init_socket(unsigned short int port);
-long get_available_worker(long nmemb, const struct sockaddr_in *addr, bool *already_handled_ptr);
+long get_available_worker(const struct sockaddr_in *addr, bool *already_handled_ptr);
 bool start_sender(long index, struct sockaddr_in *client_sockaddr, enum message_type modality, const char *payload, bool *can_open_ptr);
 bool start_receiver(long index, struct sockaddr_in *client_sockaddr, const char *payload, bool *can_open_ptr);
-bool reset_worker_info(int id, bool need_destroy);
-bool init_worker_info(long nmemb);
+bool reset_worker_info(int id, bool need_destroy, bool need_create);
+bool init_worker_info(void);
 bool handle_recv(int id);
 bool send_error_message(int id, int acc_socket);
-bool dispose_leaked_resources(int tpsize);
-bool acceptance_loop(int acc_socket, long size);
+bool dispose_leaked_resources();
+bool acceptance_loop(int acc_socket);
 bool check_installation(void); 
 
+
+void sig_handler(int signo) 
+{
+        #ifdef DEBUG
+        printf("\n\n{DEBUG} [Main Thread] Captured %d signal\n", signo);
+        #endif
+        
+        exit_server(EXIT_SUCCESS);
+}
+
+bool setup_signals(void)
+{	
+	struct sigaction act;
+	
+	memset(&act, 0, sizeof(struct sigaction));
+        
+        act.sa_flags = 0;
+	act.sa_handler = sig_handler;
+
+        if (sigfillset(&act.sa_mask) == -1) {
+		perr("{ERROR} [Main Thread] failed to initialize signal mask for main thread");
+		return false;                
+        }
+
+	while (sigaction(SIGINT, &act, NULL) == -1) {
+		if (errno != EINTR) {
+			perr("{ERROR} [Main Thread] Unable to initialize signal management for main thread (SIGINT)");
+			return false;
+		}
+	}
+
+	while (sigaction(SIGQUIT, &act, NULL) == -1) {
+		if (errno != EINTR) {
+			perr("{ERROR} [Main Thread] Unable to initialize signal management for main thread (SIGQUIT)");
+			return false;
+		}
+	}	
+
+	while (sigaction(SIGTERM, &act, NULL) == -1) {
+		if (errno != EINTR) {
+			perr("{ERROR} [Main Thread] Unable to initialize signal management for main thread (SIGTERM)");
+			return false;
+		}
+	}						
+			
+	while (sigaction(SIGHUP, &act, NULL) == -1) {
+		if (errno != EINTR) {
+			perr("{ERROR} [Main Thread] Unable to initialize signal management for main thread (SIGHUP)");
+			return false;
+		}
+	}	
+	
+	act.sa_handler = SIG_IGN;
+	
+	while (sigaction(SIGPIPE, &act, NULL) == -1) {
+		if (errno != EINTR) {
+			perr("{ERROR} [Main Thread] Unable to set to ignore SIGPIPE");
+			return false;
+		}
+	}
+
+	if (sigemptyset(&t_set) == -1) {
+		perr("{ERROR} [Main Thread] failed to initialize signal mask for worker thread");
+		return false;
+	}
+	
+	if (sigaddset(&t_set, SIGINT) == -1) {
+		perr("{ERROR} [Main Thread] failed to initialize signal mask for worker thread");
+		return false;
+	}	
+	
+	if (sigaddset(&t_set, SIGQUIT) == -1) {
+		perr("{ERROR} [Main Thread] failed to initialize signal mask for worker thread");
+		return false;
+	}	
+	
+	if (sigaddset(&t_set, SIGTERM) == -1) {
+		perr("{ERROR} [Main Thread] failed to initialize signal mask for worker thread");
+		return false;
+	}
+		
+	if (sigaddset(&t_set, SIGHUP) == -1) {
+		perr("{ERROR} [Main Thread] failed to initialize signal mask for worker thread");
+		return false;
+	} 
+
+        return true;			
+}
 
 bool handle_retransmit(long id) 
 {
@@ -512,6 +606,13 @@ void *sender_routine(void *args)
         unsigned short timeout_counter = 0;
         unsigned int last_base_for_timeout = winfo[id].base;
 
+        if (pthread_sigmask(SIG_BLOCK, &t_set, NULL)) {
+                snprintf(err_mess, ERR_SIZE, "{ERROR} %s Unable to set sigmask for worker thread", winfo[id].id_string);
+                perr(err_mess);
+                winfo[id].status = QUIT;
+                pthread_exit(NULL); 
+        }
+
         memset(err_mess, 0x0, ERR_SIZE);
 
         snprintf(winfo[id].id_string, ID_STR_LENGTH, "[Worker no. %ld - Client connected: %s:%d (OP: %d)]", 
@@ -598,6 +699,8 @@ void *sender_routine(void *args)
                                 }
 
                                 if (winfo[id].base == last_base_for_timeout) {
+
+                                        printf("counter %d\n", timeout_counter);
                                         
                                         if (pthread_mutex_unlock(&winfo[id].mutex)) {
                                                 snprintf(err_mess, ERR_SIZE, "{ERROR} %s Syncronization protocol for worker threads broken (worker_mutex)", winfo[id].id_string);
@@ -611,7 +714,6 @@ void *sender_routine(void *args)
                                                         winfo[id].status = QUIT;
                                         
                                         } else  {
-
                                                 #ifdef DEBUG
                                                 printf("{DEBUG} %s Maximum number of timeout reached for %d, abort\n", winfo[id].id_string, winfo[id].base);
                                                 #endif
@@ -647,6 +749,8 @@ void *sender_routine(void *args)
                                         
                                         if (!handle_retransmit(id))
                                                 winfo[id].status = QUIT;
+
+                                        last_base_for_timeout = winfo[id].base;
                                 }
 
                                 break;
@@ -673,11 +777,31 @@ void *sender_routine(void *args)
 
 void exit_server(int status) 
 {
-        /* TODO: implementare chiusura pulita */
+        /* TODO: controllare che la chiusura avvenga con successo anche nel caso di errori e non segnale */
+        for (int i = 0; i < concurrenty_connections; ++i)
+                if (winfo[i].status != FREE)
+                        winfo[i].status = QUIT;
+
+        for (int i = 0; i < concurrenty_connections; ++i) {
+                if (winfo[i].status != FREE) {
+                        pthread_join(winfo[i].tid, NULL);
+                        reset_worker_info(i, true, false);
+
+                        #ifdef DEBUG
+                        printf("{DEBUG} [Main thread] Disposed resources used by %d-th worker that's terminated\n", i);
+                        #endif
+                }
+        }
+
+        free(winfo);
+        free(config);
+
+        pthread_rwlock_destroy(&tmp_ls_rwlock);
+
         exit(status);
 }
 
-enum app_usages parse_cmd(int argc, char **argv, long *tpsize_ptr)
+enum app_usages parse_cmd(int argc, char **argv)
 {
         verbose = true;
         int opt;
@@ -716,7 +840,7 @@ enum app_usages parse_cmd(int argc, char **argv, long *tpsize_ptr)
                         case 'h':
                                 return (argc != 2) ? ERROR : HELP;
                         case 's':
-                                *tpsize_ptr = strtol(optarg, NULL, 10);
+                                concurrenty_connections = strtol(optarg, NULL, 10);
                                 break;
                         case 'V':
                                 verbose = true;
@@ -764,14 +888,14 @@ int init_socket(unsigned short int port)
         return fd;
 }
 
-long get_available_worker(long nmemb, const struct sockaddr_in *addr, bool *already_handled_ptr)
+long get_available_worker(const struct sockaddr_in *addr, bool *already_handled_ptr)
 {
         long ret, i;
         
         ret = -1;
         i = 0;
 
-        while (i < nmemb) {
+        while (i < concurrenty_connections) {
                 if (winfo[i].status == FREE) {
                         winfo[i].status = REQUEST;
                         ret = i;
@@ -784,7 +908,7 @@ long get_available_worker(long nmemb, const struct sockaddr_in *addr, bool *alre
         i = 0;
         *already_handled_ptr = false;
 
-        while (i < nmemb) {
+        while (i < concurrenty_connections) {
                 if (memcmp(&winfo[i].client_sockaddr, addr, sizeof(struct sockaddr_in)) == 0)
                         *already_handled_ptr = true;
 
@@ -879,7 +1003,7 @@ bool start_receiver(long index, struct sockaddr_in *client_sockaddr, const char 
         return true;
 }
 
-bool reset_worker_info(int id, bool need_destroy)
+bool reset_worker_info(int id, bool need_destroy, bool need_create)
 {
         char error_message[ERR_SIZE];
 
@@ -903,52 +1027,57 @@ bool reset_worker_info(int id, bool need_destroy)
                         perr(error_message);
                         return false;
                 }
+
+                if (winfo[id].socket != -1)
+                        close(winfo[id].socket);
         }
 
-        if (pthread_mutex_init(&winfo[id].mutex, NULL)) {
-                snprintf(error_message, ERR_SIZE, "{ERROR} [Main Thread] Unable to init metadata used by syncronization protocol for %d-th connection (worker_mutex)", id);
-                perr(error_message);
-                return false;
+        if (need_create) {
+                if (pthread_mutex_init(&winfo[id].mutex, NULL)) {
+                        snprintf(error_message, ERR_SIZE, "{ERROR} [Main Thread] Unable to init metadata used by syncronization protocol for %d-th connection (worker_mutex)", id);
+                        perr(error_message);
+                        return false;
+                }
+
+                if (pthread_mutex_init(&winfo[id].cond_mutex, NULL)) {
+                        snprintf(error_message, ERR_SIZE, "{ERROR} [Main Thread] Unable to init metadata used by syncronization protocol for %d-th connection (worker_cond_mutex)", id);
+                        perr(error_message);
+                        return false;
+                }
+
+                if (pthread_cond_init(&winfo[id].cond_var, NULL)) {
+                        snprintf(error_message, ERR_SIZE, "{ERROR} [Main Thread] Unable to init metadata used by syncronization protocol for %d-th connection (worker_cond_var)", id);
+                        perr(error_message);
+                        return false;
+                }
+
+                memcpy(&winfo[id].cfg, config, sizeof(struct gbn_config));
+
+                winfo[id].socket = -1;
+                winfo[id].base = 1;
+                winfo[id].next_seq_num = 1;
+                winfo[id].expected_seq_num = 1;
+                winfo[id].last_acked_seq_num = 0;
+                winfo[id].modality = ZERO;
+                winfo[id].status = FREE;
         }
-
-        if (pthread_mutex_init(&winfo[id].cond_mutex, NULL)) {
-                snprintf(error_message, ERR_SIZE, "{ERROR} [Main Thread] Unable to init metadata used by syncronization protocol for %d-th connection (worker_cond_mutex)", id);
-                perr(error_message);
-                return false;
-        }
-
-        if (pthread_cond_init(&winfo[id].cond_var, NULL)) {
-                snprintf(error_message, ERR_SIZE, "{ERROR} [Main Thread] Unable to init metadata used by syncronization protocol for %d-th connection (worker_cond_var)", id);
-                perr(error_message);
-                return false;
-        }
-
-        memcpy(&winfo[id].cfg, config, sizeof(struct gbn_config));
-
-        winfo[id].socket = -1;
-        winfo[id].base = 1;
-        winfo[id].next_seq_num = 1;
-        winfo[id].expected_seq_num = 1;
-        winfo[id].last_acked_seq_num = 0;
-        winfo[id].modality = ZERO;
-        winfo[id].status = FREE;
 
         return true;
 }
 
-bool init_worker_info(long nmemb) 
+bool init_worker_info(void) 
 {
-        if((winfo = calloc(nmemb, sizeof(struct worker_info))) == NULL) {
+        if((winfo = calloc(concurrenty_connections, sizeof(struct worker_info))) == NULL) {
                 perr("{ERROR} [Main Thread] Unable to allocate metadata for worker threads");
                 return false;
         }
                 
 
-        for (int i = 0; i < nmemb; ++i) {
+        for (int i = 0; i < concurrenty_connections; ++i) {
                 memset(&winfo[i], 0x0, sizeof(struct worker_info));
                 winfo[i].port = START_WORKER_PORT + i;
                 
-                if (!reset_worker_info(i, false)) {
+                if (!reset_worker_info(i, false, true)) {
                         free(winfo);
                         return false;
                 }            
@@ -986,7 +1115,45 @@ bool handle_recv(int id)
                         }
                 }
 
+                if (is_last(recv_header)) {
+
+                        if (pthread_sigmask(SIG_BLOCK, &t_set, NULL)) {
+                                perr("{ERROR} [Main Thread] Block of signals before critical section failed");
+                                return false;                                
+                        }
+
+                        if (pthread_mutex_lock(&winfo[id].mutex)) {
+                                snprintf(error_message, ERR_SIZE, "{ERROR} [Main Thread] Syncronization protocol for worker threads broken (worker_mutex_%d)", id);
+                                perr(error_message);
+                                return false;
+                        }
+
+                        winfo[id].status = QUIT;
+
+                        if (pthread_mutex_unlock(&winfo[id].mutex)) {
+                                snprintf(error_message, ERR_SIZE, "{ERROR} [Main Thread] Syncronization protocol for worker threads broken (worker_mutex_%d)", id);
+                                perr(error_message);
+                                return false;
+                        }
+
+                        if (pthread_sigmask(SIG_UNBLOCK, &t_set, NULL)) {
+                                perr("{ERROR} [Main Thread] Block of signals before critical section failed");
+                                return false;                                
+                        }
+                        
+                        FD_CLR(winfo[id].socket, &all_fds);
+
+                        #ifdef DEBUG
+                        printf("{DEBUG} [Main Thread] Comunication with %d-th client has expired\n", id);
+                        #endif
+                }
+
                 if (get_sequence_number(recv_header) >= winfo[id].base) {
+
+                        if (pthread_sigmask(SIG_BLOCK, &t_set, NULL)) {
+                                perr("{ERROR} [Main Thread] Block of signals before critical section failed");
+                                return false;                                
+                        }
 
                         if (pthread_mutex_lock(&winfo[id].mutex)) {
                                 snprintf(error_message, ERR_SIZE, "{ERROR} [Main Thread] Syncronization protocol for worker threads broken (worker_mutex_%d)", id);
@@ -1001,6 +1168,17 @@ bool handle_recv(int id)
                                 perr(error_message);
                                 return false;
                         }
+
+                        if (pthread_sigmask(SIG_UNBLOCK, &t_set, NULL)) {
+                                perr("{ERROR} [Main Thread] Block of signals before critical section failed");
+                                return false;                                
+                        }
+
+                }
+
+                if (pthread_sigmask(SIG_BLOCK, &t_set, NULL)) {
+                        perr("{ERROR} [Main Thread] Block of signals before critical section failed");
+                        return false;                                
                 }
 
                 if (pthread_mutex_lock(&winfo[id].mutex)) {
@@ -1021,27 +1199,9 @@ bool handle_recv(int id)
                         return false;
                 }
 
-                if (is_last(recv_header)) {
-
-                        if (pthread_mutex_lock(&winfo[id].mutex)) {
-                                snprintf(error_message, ERR_SIZE, "{ERROR} [Main Thread] Syncronization protocol for worker threads broken (worker_mutex_%d)", id);
-                                perr(error_message);
-                                return false;
-                        }
-
-                        winfo[id].status = QUIT;
-
-                        if (pthread_mutex_unlock(&winfo[id].mutex)) {
-                                snprintf(error_message, ERR_SIZE, "{ERROR} [Main Thread] Syncronization protocol for worker threads broken (worker_mutex_%d)", id);
-                                perr(error_message);
-                                return false;
-                        }
-                        
-                        FD_CLR(winfo[id].socket, &all_fds);
-
-                        #ifdef DEBUG
-                        printf("{DEBUG} [Main Thread] Comunication with %d-th client has expired\n", id);
-                        #endif
+                if (pthread_sigmask(SIG_UNBLOCK, &t_set, NULL)) {
+                        perr("{ERROR} [Main Thread] Block of signals before critical section failed");
+                        return false;                                
                 } 
         }
 
@@ -1077,17 +1237,17 @@ bool send_error_message(int id, int acc_socket)
         return true;
 }
 
-bool dispose_leaked_resources(int tpsize)
+bool dispose_leaked_resources(void)
 {
-        for (int i = 0; i < tpsize; ++i) {
+        for (int i = 0; i < concurrenty_connections; ++i) {
                 if (winfo[i].status == QUIT) {
                         pthread_join(winfo[i].tid, NULL);
 
-                        if (!reset_worker_info(i, true))
+                        if (!reset_worker_info(i, true, true))
                                 return false;
 
                         #ifdef DEBUG
-                        printf("{DEBUG} [Main thread] Disposed resources used by %d worker that's terminated\n", i);
+                        printf("{DEBUG} [Main thread] Disposed resources used by %d-th worker that's terminated\n", i);
                         #endif
                 }
         }
@@ -1095,7 +1255,7 @@ bool dispose_leaked_resources(int tpsize)
         return true;
 }
 
-bool acceptance_loop(int acc_socket, long tpsize)
+bool acceptance_loop(int acc_socket)
 {
         int winfo_index, ready_fds, maxfd;
         struct sockaddr_in addr;
@@ -1139,7 +1299,7 @@ bool acceptance_loop(int acc_socket, long tpsize)
                                 continue;
                         }
                         
-                        if ((winfo_index = get_available_worker(tpsize, &addr, &already_handled)) == -1) {
+                        if ((winfo_index = get_available_worker(&addr, &already_handled)) == -1) {
 
                                 #ifdef DEBUG
                                 printf("{DEBUG} [Main Thread] All workers are busy. Can't handle request\n");
@@ -1191,7 +1351,7 @@ bool acceptance_loop(int acc_socket, long tpsize)
                         #endif
                 }  
 
-                for (int i = 0; (i < tpsize) && (ready_fds > 0); ++i) {
+                for (int i = 0; (i < concurrenty_connections) && (ready_fds > 0); ++i) {
 
                         if (winfo[i].socket != -1) {
                                 if (FD_ISSET(winfo[i].socket, &read_fds)) {
@@ -1203,7 +1363,7 @@ bool acceptance_loop(int acc_socket, long tpsize)
                         }
                 }
 
-                if (!dispose_leaked_resources(tpsize))
+                if (!dispose_leaked_resources())
                         return false;
         }
 
@@ -1225,9 +1385,7 @@ bool check_installation(void)
 
 int main(int argc, char **argv)
 {
-        int acceptance_sockfd;
         enum app_usages modality;
-        long concurrenty_connections;
 
         #ifdef DEBUG
         printf("*** DEBUG MODE ***\n\n\n");
@@ -1237,6 +1395,9 @@ int main(int argc, char **argv)
                 fprintf(stderr, "Server not installed yet!\n\nPlease run the following command:\n\tsh /path/to/script/install-server.sh\n");
                 exit_server(EXIT_FAILURE);
         }
+
+        if (!setup_signals())
+                exit_server(EXIT_FAILURE);
 
         if (pthread_rwlock_init(&tmp_ls_rwlock, NULL)) {
                 perr("{ERROR [Main Thread] Unable to initialize syncronization protocol for tmp-ls file");
@@ -1252,7 +1413,7 @@ int main(int argc, char **argv)
         }  
 
         acceptance_port = DEFAULT_PORT;
-        modality = parse_cmd(argc, argv, &concurrenty_connections);
+        modality = parse_cmd(argc, argv);
 
         switch(modality) {
                 case STANDARD: 
@@ -1269,7 +1430,7 @@ int main(int argc, char **argv)
                         printf("\t\t-P [--prob]\t<percentage>\tLoss probability\n");
                         printf("\t\t-s [--tpsize]\t<size>\t\tMax number of concurrenty connections\n");
                         printf("\t\t-v [--version]\t\t\tVersion of gbn-ftp-server\n");
-                        printf("\t\t-V [--verbose]\t\t\tPrint verbose version of error\n");
+                        printf("\t\t-V [--verbose]\t\t\tPrint verbose version of error\n\n");
                         exit_server(EXIT_SUCCESS);
                         break;
                 case VERSION: 
@@ -1285,7 +1446,7 @@ int main(int argc, char **argv)
                         abort();        
         } 
 
-        if (!init_worker_info(concurrenty_connections))
+        if (!init_worker_info())
                 exit_server(EXIT_FAILURE);
 
         if ((acceptance_sockfd = init_socket(acceptance_port)) == -1) 
@@ -1293,7 +1454,7 @@ int main(int argc, char **argv)
 
         printf("Server is now listening ...\n");
 
-        if (!acceptance_loop(acceptance_sockfd, concurrenty_connections))
+        if (!acceptance_loop(acceptance_sockfd))
                 exit_server(EXIT_FAILURE);
 
         close(acceptance_sockfd);        

@@ -66,6 +66,9 @@ enum app_usages parse_cmd(int argc, char **argv, char *address);
 bool set_sockadrr_in(struct sockaddr_in *server_sockaddr, const char *address_string, unsigned short int port);
 ssize_t send_request(enum message_type type, const char *filename, size_t filename_length);
 ssize_t send_ack(enum message_type type, unsigned int seq_num, bool is_last);
+bool request_loop(int writefd, enum message_type type, const char *filename, enum connection_status *status_ptr, bool *delete_file);
+bool lg_connect_loop(int writefd, enum message_type type, enum connection_status *status_ptr);
+bool p_connect_loop(struct put_args *args);
 bool list(void);
 bool get_file(void);
 struct put_args *init_put_args(void);
@@ -492,7 +495,7 @@ bool request_loop(int writefd, enum message_type type, const char *filename, enu
                                 if (type == GET)
                                         *delete_file = true;
 
-                                fprintf(stderr, "{ERROR} [Main Thread] Selected file does not exists on server\n");
+                                fprintf(stderr, "Selected file does not exists on server\n");
                                 return false;
                         }
                 }
@@ -684,11 +687,14 @@ bool get_file(void)
                 return false;
         }
 
-        if (!g_request_loop(fd, filename, &status, &delete_file))
-                return false;
-
-        if (delete_file)
-                remove(path);
+        if (!g_request_loop(fd, filename, &status, &delete_file)) {
+                if (delete_file) {
+                        remove(path);
+                        return true;
+                } else {
+                        return false;
+                }
+        }
 
         if (!lg_connect_loop(fd, GET, &status))
                 return false;
@@ -837,9 +843,8 @@ int main(int argc, char **argv)
                 case STANDARD: 
                         break;
                 case HELP:
-                        printf("\n\tusage: gbn-ftp-client [options]\n");
+                        printf("\n\tusage: gbn-ftp-client -a [--address] <address> [options]\n");
                         printf("\n\tList of available options:\n");
-                        printf("\t\t-a [--address]\t<address>\tserver address (IPv4) {REQUIRED}\n");
                         printf("\t\t-p [--port]\t<port>\t\tserver port\n");
                         printf("\t\t-N [--wndsize]\t<size>\t\tWindow size (for GBN)\n");
                         printf("\t\t-t [--rtousec]\t<timeout>\tRetransmition timeout [usec] (for GBN)\n");
@@ -865,9 +870,10 @@ int main(int argc, char **argv)
         if (!set_sockadrr_in(&request_sockaddr, address_string, server_port))
                 exit_client(EXIT_FAILURE);
 
+        cls();
+        printf("Welcome to GBN-FTP service\n\n");
+
         do {
-                cls();
-                printf("Welcome to GBN-FTP service\n\n");
                 printf("*** What do you wanna do? ***\n\n");
                 printf("[L]IST all available files\n");
                 printf("[P]UT a file on the server\n");
@@ -899,6 +905,9 @@ int main(int argc, char **argv)
                                 fprintf(stderr, "Invalid condition at %s:%d\n", __FILE__, __LINE__);
                                 abort();
                 }
+
+                cls();
+                
         } while (choice != 'Q');   
   
         return 0;

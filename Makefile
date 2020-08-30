@@ -1,6 +1,9 @@
+# N.B. ESECUZIONE CON VALGRIND
+# valgrind --leak-check=full --track-origins=yes --show-leak-kinds=all ./<prog> <options>
+
 IDIR = ./include
 CC = gcc
-CFLAGS = -I$(IDIR) -Wall -Wextra# -DDEBUG
+CFLAGS = -I$(IDIR) -Wall -Wextra -DDEBUG -ggdb3
 ODIR = ./obj
 BDIR = ./bin
 SDIR = ./src
