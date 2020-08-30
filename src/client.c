@@ -489,7 +489,8 @@ bool request_loop(int writefd, enum message_type type, const char *filename, enu
                                 if (writefd != -1)
                                         close(writefd);
                                 
-                                *delete_file = true;
+                                if (type == GET)
+                                        *delete_file = true;
 
                                 fprintf(stderr, "{ERROR} [Main Thread] Selected file does not exists on server\n");
                                 return false;
@@ -644,7 +645,8 @@ bool list(void)
         if (!lg_connect_loop(STDIN_FILENO, LIST, &status))
                 return false;
 
-        printf("Press any key to get back to menu\n");
+        printf("\n\nPress any key to get back to menu ");
+        fflush(stdout);
         getchar();
 
         close(sockfd);
@@ -691,7 +693,8 @@ bool get_file(void)
         if (!lg_connect_loop(fd, GET, &status))
                 return false;
 
-        printf("File succesfully downloaded\nPress return to get back to menu\n");
+        printf("\n\nFile succesfully downloaded\nPress return to get back to menu ");
+        fflush(stdout);
         getchar();
 
         close(fd);

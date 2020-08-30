@@ -21,6 +21,8 @@
 #define CMD_SIZE 128
 #define START_WORKER_PORT 29290
 
+#define MAX_TO_PUT_SEC 10
+
 
 struct worker_info {
         int socket;                                     /* socket dedicata per la comunicazione */
@@ -53,6 +55,7 @@ unsigned short int acceptance_port;
 struct worker_info *winfo;
 struct gbn_config *config;
 fd_set all_fds;
+pthread_rwlock_t tmp_ls_rwlock;
 
 
 bool handle_retransmit(long id); 
@@ -124,10 +127,31 @@ ssize_t send_file_chunk(long id)
         memset(buff, 0x0, CHUNK_SIZE);
         memset(error_message, 0x0, ERR_SIZE);
 
-        if ((rsize = read(winfo[id].fd, buff, CHUNK_SIZE)) == -1) {
-                snprintf(error_message, ERR_SIZE, "{ERROR} %s Unable to read from selected file", winfo[id].id_string);
-                perr(error_message);
-                return -1;                
+        if (winfo[id].modality == LIST) {
+                if (pthread_rwlock_rdlock(&tmp_ls_rwlock)) {
+                        snprintf(error_message, ERR_SIZE, "{ERROR} %s Syncronization protocol for tmp-ls file broken", winfo[id].id_string);
+                        perr(error_message);
+                        return -1;
+                }
+
+                if ((rsize = read(winfo[id].fd, buff, CHUNK_SIZE)) == -1) {
+                        snprintf(error_message, ERR_SIZE, "{ERROR} %s Unable to read from selected file", winfo[id].id_string);
+                        perr(error_message);
+                        return -1;                
+                }
+
+                if (pthread_rwlock_unlock(&tmp_ls_rwlock)) {
+                        snprintf(error_message, ERR_SIZE, "{ERROR} %s Syncronization protocol for tmp-ls file broken", winfo[id].id_string);
+                        perr(error_message);
+                        return -1;
+                }
+
+        } else {
+                if ((rsize = read(winfo[id].fd, buff, CHUNK_SIZE)) == -1) {
+                        snprintf(error_message, ERR_SIZE, "{ERROR} %s Unable to read from selected file", winfo[id].id_string);
+                        perr(error_message);
+                        return -1;                
+                }
         }
 
         if (rsize > 0) {
@@ -210,8 +234,8 @@ ssize_t lg_send_new_port_mess(long id)
 
                 while (winfo[id].status != CONNECTED) {
                         gettimeofday(&tv, NULL);
-                        ts.tv_sec = tv.tv_sec + floor((double) winfo[id].cfg.rto_usec / (double) 1000000);
-                        ts.tv_nsec = (tv.tv_usec + (winfo[id].cfg.rto_usec % 1000000)) * 1000;
+                        ts.tv_sec = tv.tv_sec + floor((double) (winfo[id].cfg.rto_usec + tv.tv_usec) / (double) 1000000);
+                        ts.tv_nsec = ((tv.tv_usec + winfo[id].cfg.rto_usec) % 1000000) * 1000;
                         
                         ret = pthread_cond_timedwait(&winfo[id].cond_var, &winfo[id].cond_mutex, &ts);
                         
@@ -318,6 +342,46 @@ ssize_t p_send_ack(long id, unsigned int seq_num, bool is_last)
         return wsize;
 }
 
+bool update_tmp_ls_file(int id)
+{
+        FILE *tmp_ls_file;
+        char path[PATH_SIZE];
+        char error_message[ERR_SIZE];
+
+        memset(path, 0x0, PATH_SIZE);
+        memset(error_message, 0x0, ERR_SIZE);
+
+        snprintf(path, PATH_SIZE, "/home/%s/.gbn-ftp-public/.tmp-ls", getenv("USER"));
+
+        if ((tmp_ls_file = fopen(path, "a")) == NULL) {
+                snprintf(error_message, ERR_SIZE, "{ERROR} %s Unable to open tmp-ls file", winfo[id].id_string);
+                perr(error_message);
+                return false;
+        }
+
+        if (pthread_rwlock_wrlock(&tmp_ls_rwlock)) {
+                snprintf(error_message, ERR_SIZE, "{ERROR} %s Syncronization protocol for tmp-ls file broken", winfo[id].id_string);
+                perr(error_message);
+                return false;
+        }
+
+        fprintf(tmp_ls_file, "%s\n", winfo[id].filename);
+
+        if (pthread_rwlock_unlock(&tmp_ls_rwlock)) {
+                snprintf(error_message, ERR_SIZE, "{ERROR} %s Syncronization protocol for tmp-ls file broken", winfo[id].id_string);
+                perr(error_message);
+                return false;
+        }
+
+        #ifdef DEBUG
+        printf("{DEBUG} %s Updated tmp-ls file\n", winfo[id].id_string);
+        #endif
+
+        fclose(tmp_ls_file);
+        
+        return true;
+}
+
 bool handle_ack_messages(long id)
 {
         char payload[CHUNK_SIZE];
@@ -336,8 +400,8 @@ bool handle_ack_messages(long id)
 
         do {
                 read_fds = all_fds;
-                tv.tv_sec = MAX_TO * floor((double) winfo[id].cfg.rto_usec / (double) 1000000);
-                tv.tv_usec =  MAX_TO * winfo[id].cfg.rto_usec % 1000000;
+                tv.tv_sec = MAX_TO_PUT_SEC;
+                tv.tv_usec =  0;
                 
                 if ((retval = select(winfo[id].socket + 1, &read_fds, NULL, NULL, &tv)) == -1) {
                         snprintf(error_message, ERR_SIZE, "{ERROR} %s Unable to receive message (select)", winfo[id].id_string);
@@ -375,6 +439,9 @@ bool handle_ack_messages(long id)
                                         for (int i = 0; i < LAST_MESSAGE_LOOP - 1; ++i)                                
                                                 if (p_send_ack(id, winfo[id].last_acked_seq_num, true) == -1)
                                                         return false;
+
+                                        if (!update_tmp_ls_file(id))
+                                                return false;
                                 }
 
                         } else {
@@ -1168,6 +1235,11 @@ int main(int argc, char **argv)
 
         if (!check_installation()) {
                 fprintf(stderr, "Server not installed yet!\n\nPlease run the following command:\n\tsh /path/to/script/install-server.sh\n");
+                exit_server(EXIT_FAILURE);
+        }
+
+        if (pthread_rwlock_init(&tmp_ls_rwlock, NULL)) {
+                perr("{ERROR [Main Thread] Unable to initialize syncronization protocol for tmp-ls file");
                 exit_server(EXIT_FAILURE);
         }
 

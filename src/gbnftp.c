@@ -7,7 +7,7 @@
 #include "common.h"
 
 const struct gbn_config DEFAULT_GBN_CONFIG = {
-        16, 1000000, false, 0.1
+        8, 100000, false, 0.01
 };
 
 void set_sequence_number(gbn_ftp_header_t *header, unsigned int seq_no) 
