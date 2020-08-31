@@ -33,7 +33,7 @@
 #define l_request_loop(status_ptr) request_loop(-1, LIST, NULL, status_ptr, NULL)
 #define g_request_loop(writefd, filename, status_ptr, delete_file) request_loop(writefd, GET, filename, status_ptr, delete_file)
 #define p_request_loop(writefd, filename, status_ptr) request_loop(writefd, PUT, filename, status_ptr, NULL)
-
+#define gbn_send(socket, header, payload, payload_length, sockaddr_in) gbn_send_with_prob(socket, header, payload, payload_length, sockaddr_in, config)
 
 struct put_args {
         int fd;                                 /* descrittore del file su cui si deve operare */
@@ -117,7 +117,7 @@ ssize_t send_file_chunk(void)
                         set_last(&header, false);
                 }   
 
-                if ((wsize = gbn_send(sockfd, header, buff, rsize, NULL, config)) == -1) {
+                if ((wsize = gbn_send(sockfd, header, buff, rsize, NULL)) == -1) {
                         perr("{ERROR} [Sender Thread] Unable to send chunk to server");
                         return -1;
                 }
@@ -424,7 +424,7 @@ ssize_t send_request(enum message_type type, const char *filename, size_t filena
         set_ack(&header, false);
         set_message_type(&header, type);
 
-        if ((wsize = gbn_send(sockfd, header, filename, filename_length, &request_sockaddr, config)) == -1) {
+        if ((wsize = gbn_send(sockfd, header, filename, filename_length, &request_sockaddr)) == -1) {
                 snprintf(error_message, ERR_SIZE, "{ERROR} [Main Thread] Unable to send request command to server (OP %d)", type);
                 perr(error_message);
                 return -1;
@@ -450,7 +450,7 @@ ssize_t send_ack(enum message_type type, unsigned int seq_num, bool is_last)
         set_ack(&header, true);
         set_message_type(&header, type);
 
-        if ((wsize = gbn_send(sockfd, header, NULL, 0, NULL, config)) == -1) {
+        if ((wsize = gbn_send(sockfd, header, NULL, 0, NULL)) == -1) {
                 if (errno != ECONNREFUSED) {
                         snprintf(error_message, ERR_SIZE, "{ERROR} [Main Thread] Unable to send ack to server (OP %d)", type);
                         perr(error_message);

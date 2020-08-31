@@ -129,7 +129,7 @@ static void get_segment(char *message, gbn_ftp_header_t *header, char *payload, 
                 memcpy(payload, (message + header_size), message_size - header_size);
 }
 
-ssize_t gbn_send(int socket, gbn_ftp_header_t header, const void *payload, size_t payload_length, const struct sockaddr_in *sockaddr_in, const struct gbn_config *configs)
+ssize_t gbn_send_with_prob(int socket, gbn_ftp_header_t header, const void *payload, size_t payload_length, const struct sockaddr_in *sockaddr_in, const struct gbn_config *configs)
 {
         ssize_t send_size;
         char *message; 

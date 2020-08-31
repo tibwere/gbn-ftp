@@ -24,6 +24,8 @@
 
 #define MAX_TO_PUT_SEC 10
 
+#define gbn_send(socket, header, payload, payload_length, sockaddr_in) gbn_send_with_prob(socket, header, payload, payload_length, sockaddr_in, config)
+
 
 struct worker_info {
         int socket;                                     /* socket dedicata per la comunicazione */
@@ -41,7 +43,6 @@ struct worker_info {
         unsigned int expected_seq_num;                  /* variabile expected_seq_num del protocollo gbn associata alla connessione */
         unsigned int last_acked_seq_num;                /* variabile last_acked_seq_num del protocollo gbn associata alla connessione */
         struct timeval start_timer;                     /* struttura utilizzata per la gestione del timer */
-        struct gbn_config cfg;                          /* struttura contenente info relative alla finestra e all'entità del timeout */
         pthread_t tid;                                  /* ID del thread servent e*/
         int fd;                                         /* descrittore del file su cui si deve operare */ 
 };
@@ -194,7 +195,7 @@ ssize_t send_file_chunk(long id)
                         set_last(&header, false);
                 }   
 
-                if ((wsize = gbn_send(winfo[id].socket, header, buff, rsize, &winfo[id].client_sockaddr, &winfo[id].cfg)) == -1) {
+                if ((wsize = gbn_send(winfo[id].socket, header, buff, rsize, &winfo[id].client_sockaddr)) == -1) {
                         snprintf(error_message, ERR_SIZE, "{ERROR} %s Unable to send chunk to client", winfo[id].id_string);
                         perr(error_message);
                         return -1;
@@ -254,7 +255,7 @@ ssize_t lg_send_new_port_mess(long id)
         set_ack(&header, false);
 
         do {
-                if ((wsize = gbn_send(winfo[id].socket, header, NULL, 0, &winfo[id].client_sockaddr, &winfo[id].cfg)) == -1) {
+                if ((wsize = gbn_send(winfo[id].socket, header, NULL, 0, &winfo[id].client_sockaddr)) == -1) {
                         snprintf(error_message, ERR_SIZE, "{ERROR} %s Unable to send NEW_PORT message", winfo[id].id_string);
                         perr(error_message);
                         return false;
@@ -272,8 +273,8 @@ ssize_t lg_send_new_port_mess(long id)
 
                 while (winfo[id].status != CONNECTED) {
                         gettimeofday(&tv, NULL);
-                        ts.tv_sec = tv.tv_sec + floor((double) (winfo[id].cfg.rto_usec + tv.tv_usec) / (double) 1000000);
-                        ts.tv_nsec = ((tv.tv_usec + winfo[id].cfg.rto_usec) % 1000000) * 1000;
+                        ts.tv_sec = tv.tv_sec + floor((double) (config->rto_usec + tv.tv_usec) / (double) 1000000);
+                        ts.tv_nsec = ((tv.tv_usec + config->rto_usec) % 1000000) * 1000;
                         
                         ret = pthread_cond_timedwait(&winfo[id].cond_var, &winfo[id].cond_mutex, &ts);
                         
@@ -318,7 +319,7 @@ ssize_t p_send_new_port_mess(long id)
         memset(error_message, 0x0, ERR_SIZE);
 
         do {
-                if ((wsize = gbn_send(winfo[id].socket, send_header, NULL, 0, &winfo[id].client_sockaddr, &winfo[id].cfg)) == -1) {
+                if ((wsize = gbn_send(winfo[id].socket, send_header, NULL, 0, &winfo[id].client_sockaddr)) == -1) {
                         snprintf(error_message, ERR_SIZE, "{ERROR} %s Unable to send NEW_PORT message", winfo[id].id_string);
                         perr(error_message);
                         return false;
@@ -329,8 +330,8 @@ ssize_t p_send_new_port_mess(long id)
                 #endif
 
                 read_fds = all_fds;
-                tv.tv_sec = floor((double) winfo[id].cfg.rto_usec / (double) 1000000);
-                tv.tv_usec =  winfo[id].cfg.rto_usec % 1000000;
+                tv.tv_sec = floor((double) config->rto_usec / (double) 1000000);
+                tv.tv_usec =  config->rto_usec % 1000000;
 
                 if ((ret = select(winfo[id].socket + 1, &read_fds, NULL, NULL, &tv)) == -1) {
                         snprintf(error_message, ERR_SIZE, "{ERROR} %s Unable to get message (select)", winfo[id].id_string);
@@ -367,7 +368,7 @@ ssize_t p_send_ack(long id, unsigned int seq_num, bool is_last)
 
         memset(error_message, 0x0, ERR_SIZE);
 
-        if ((wsize = gbn_send(winfo[id].socket, header, NULL, 0, &winfo[id].client_sockaddr, config)) == -1) {
+        if ((wsize = gbn_send(winfo[id].socket, header, NULL, 0, &winfo[id].client_sockaddr)) == -1) {
                 snprintf(error_message, ERR_SIZE, "{ERROR} %s Unable to send ACK %d", winfo[id].id_string, seq_num);
                 perr(error_message);
                 return -1;
@@ -593,7 +594,7 @@ void *sender_routine(void *args)
                                         winfo[id].status = QUIT;
                                 }
 
-                                if (winfo[id].next_seq_num < winfo[id].base + winfo[id].cfg.N) {
+                                if (winfo[id].next_seq_num < winfo[id].base + config->N) {
                                         
                                         if (pthread_mutex_unlock(&winfo[id].mutex)) {
                                                 snprintf(err_mess, ERR_SIZE, "{ERROR} %s Syncronization protocol for worker threads broken (worker_mutex)", winfo[id].id_string);
@@ -629,7 +630,7 @@ void *sender_routine(void *args)
                                                 if (elapsed_usec(&winfo[id].start_timer, &tv) >= adapt[id].estimatedRTT + 4 * adapt[id].devRTT)
                                                         winfo[id].status = TIMEOUT;
                                         } else {
-                                                if (elapsed_usec(&winfo[id].start_timer, &tv) >= winfo[id].cfg.rto_usec)
+                                                if (elapsed_usec(&winfo[id].start_timer, &tv) >= config->rto_usec)
                                                         winfo[id].status = TIMEOUT;
                                         }
 
@@ -1018,8 +1019,6 @@ bool reset_worker_info(int id, bool need_destroy, bool need_create)
                         return false;
                 }
 
-                memcpy(&winfo[id].cfg, config, sizeof(struct gbn_config));
-
                 winfo[id].socket = -1;
                 winfo[id].base = 1;
                 winfo[id].next_seq_num = 1;
@@ -1204,7 +1203,7 @@ bool send_error_message(int id, int acc_socket)
         set_err(&header, true);
 
         for (int i = 0; i < LAST_MESSAGE_LOOP; ++i) {
-                if ((wsize += gbn_send(acc_socket, header, NULL, 0, &winfo[id].client_sockaddr, config)) == -1) {
+                if ((wsize += gbn_send(acc_socket, header, NULL, 0, &winfo[id].client_sockaddr)) == -1) {
                         snprintf(error_message, ERR_SIZE, "{ERROR} [Main Thread] Unable to send error message to %d-th client", id);
                         perr(error_message);
                         return false;
