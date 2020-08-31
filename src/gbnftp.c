@@ -7,7 +7,7 @@
 #include "common.h"
 
 const struct gbn_config DEFAULT_GBN_CONFIG = {
-        8, 100000, false, 0.01
+        8, 100000, true, 0.01
 };
 
 void set_sequence_number(gbn_ftp_header_t *header, unsigned int seq_no) 
@@ -98,8 +98,6 @@ bool is_err(gbn_ftp_header_t header)
 {
         return ((header & ERR_MASK) == ERR_MASK) ? true : false;
 }
-
-
 
 static char * make_segment(gbn_ftp_header_t header, const char *payload, size_t payload_size)
 {

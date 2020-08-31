@@ -80,13 +80,18 @@ bool dispose_put_args(void);
 bool put_file(void);
 bool check_installation(void);
 
-
+#ifdef DEBUG
 void sig_handler(int signo) 
+#else
+void sig_handler(__attribute__((unused)) int signo)
+#endif
 {
         #ifdef DEBUG
         printf("\n\n{DEBUG} [Main Thread] Captured %d signal\n", signo);
         #endif
-        
+
+        printf("\nBye bye\n\n");
+
         exit_client(EXIT_SUCCESS);
 }
 
@@ -318,21 +323,12 @@ void *put_sender_routine(__attribute__((unused)) void *dummy)
 
 void exit_client(int status) 
 {
-// int sockfd;
-// struct gbn_config *config;
-// struct sockaddr_in request_sockaddr;
-// unsigned short int server_port;
-// struct put_args *args;
-// sigset_t t_set;
-
         dispose_put_args();
 
         free(config);
 
-        if (args) {
-
+        if (args) 
                 free(args);
-        }
 
         close(sockfd);
         exit(status);
@@ -971,7 +967,6 @@ int main(int argc, char **argv)
                                 
                                 break;                                
                         case 'Q': 
-                                printf("Bye bye\n\n");
                                 break;
                         default:
                                 fprintf(stderr, "Invalid condition at %s:%d\n", __FILE__, __LINE__);

@@ -88,7 +88,11 @@ bool acceptance_loop(int acc_socket);
 bool check_installation(void); 
 
 
+#ifdef DEBUG
 void sig_handler(int signo) 
+#else
+void sig_handler(__attribute__((unused)) int signo)
+#endif 
 {
         #ifdef DEBUG
         printf("\n\n{DEBUG} [Main Thread] Captured %d signal\n", signo);
@@ -763,6 +767,8 @@ void exit_server(int status)
 
 
         pthread_rwlock_destroy(&tmp_ls_rwlock);
+
+        printf("\nServer is shutting down ...\n\n");
  
         exit(status);
 }
@@ -776,7 +782,7 @@ enum app_usages parse_cmd(int argc, char **argv)
                 {"port",        required_argument,      0, 'p'},
                 {"wndsize",     required_argument,      0, 'N'},
                 {"rtousec",     required_argument,      0, 't'},
-                {"adaptive",    no_argument,            0, 'A'},
+                {"fixed",       no_argument,            0, 'f'},
                 {"prob",        required_argument,      0, 'P'},
                 {"tpsize",      required_argument,      0, 's'},
                 {"help",        no_argument,            0, 'h'},
@@ -785,7 +791,7 @@ enum app_usages parse_cmd(int argc, char **argv)
                 {0,             0,                      0, 0}
         };
 
-        while ((opt = getopt_long(argc, argv, "p:N:t:AP:s:hvV", long_options, NULL)) != -1) {
+        while ((opt = getopt_long(argc, argv, "p:N:t:fP:s:hvV", long_options, NULL)) != -1) {
                 switch (opt) {
                         case 'p':
                                 acceptance_port = strtol(optarg, NULL, 10);
@@ -797,8 +803,8 @@ enum app_usages parse_cmd(int argc, char **argv)
                         case 't':
                                 config->rto_usec = strtol(optarg, NULL, 10);
                                 break;
-                        case 'A':
-                                config->is_adaptive = true;
+                        case 'f':
+                                config->is_adaptive = false;
                                 break;
                         case 'P':
                                 config->probability = (double) strtol(optarg, NULL, 10) / (double) 100;
