@@ -62,7 +62,6 @@ sigset_t t_set;
 long concurrenty_connections;
 
 
-bool setup_signals(void);
 bool handle_retransmit(long id); 
 ssize_t send_file_chunk(long id);
 ssize_t lg_send_new_port_mess(long id);
@@ -94,85 +93,6 @@ void sig_handler(int signo)
         #endif
         
         exit_server(EXIT_SUCCESS);
-}
-
-bool setup_signals(void)
-{	
-	struct sigaction act;
-	
-	memset(&act, 0, sizeof(struct sigaction));
-        
-        act.sa_flags = 0;
-	act.sa_handler = sig_handler;
-
-        if (sigfillset(&act.sa_mask) == -1) {
-		perr("{ERROR} [Main Thread] failed to initialize signal mask for main thread");
-		return false;                
-        }
-
-	while (sigaction(SIGINT, &act, NULL) == -1) {
-		if (errno != EINTR) {
-			perr("{ERROR} [Main Thread] Unable to initialize signal management for main thread (SIGINT)");
-			return false;
-		}
-	}
-
-	while (sigaction(SIGQUIT, &act, NULL) == -1) {
-		if (errno != EINTR) {
-			perr("{ERROR} [Main Thread] Unable to initialize signal management for main thread (SIGQUIT)");
-			return false;
-		}
-	}	
-
-	while (sigaction(SIGTERM, &act, NULL) == -1) {
-		if (errno != EINTR) {
-			perr("{ERROR} [Main Thread] Unable to initialize signal management for main thread (SIGTERM)");
-			return false;
-		}
-	}						
-			
-	while (sigaction(SIGHUP, &act, NULL) == -1) {
-		if (errno != EINTR) {
-			perr("{ERROR} [Main Thread] Unable to initialize signal management for main thread (SIGHUP)");
-			return false;
-		}
-	}	
-	
-	act.sa_handler = SIG_IGN;
-	
-	while (sigaction(SIGPIPE, &act, NULL) == -1) {
-		if (errno != EINTR) {
-			perr("{ERROR} [Main Thread] Unable to set to ignore SIGPIPE");
-			return false;
-		}
-	}
-
-	if (sigemptyset(&t_set) == -1) {
-		perr("{ERROR} [Main Thread] failed to initialize signal mask for worker thread");
-		return false;
-	}
-	
-	if (sigaddset(&t_set, SIGINT) == -1) {
-		perr("{ERROR} [Main Thread] failed to initialize signal mask for worker thread");
-		return false;
-	}	
-	
-	if (sigaddset(&t_set, SIGQUIT) == -1) {
-		perr("{ERROR} [Main Thread] failed to initialize signal mask for worker thread");
-		return false;
-	}	
-	
-	if (sigaddset(&t_set, SIGTERM) == -1) {
-		perr("{ERROR} [Main Thread] failed to initialize signal mask for worker thread");
-		return false;
-	}
-		
-	if (sigaddset(&t_set, SIGHUP) == -1) {
-		perr("{ERROR} [Main Thread] failed to initialize signal mask for worker thread");
-		return false;
-	} 
-
-        return true;			
 }
 
 bool handle_retransmit(long id) 
@@ -554,12 +474,22 @@ bool handle_ack_messages(long id)
 void *receiver_routine(void *args) 
 {
         long id = (long) args;
+        char err_mess[ERR_SIZE];
 
         snprintf(winfo[id].id_string, ID_STR_LENGTH, "[Worker no. %ld - Client connected: %s:%d (OP: %d)]", 
                 id, 
                 inet_ntoa((winfo[id].client_sockaddr).sin_addr), 
                 ntohs((winfo[id].client_sockaddr).sin_port),
                 winfo[id].modality);
+
+        memset(err_mess, 0x0, ERR_SIZE);
+
+        if (pthread_sigmask(SIG_BLOCK, &t_set, NULL)) {
+                snprintf(err_mess, ERR_SIZE, "{ERROR} %s Unable to set sigmask for worker thread", winfo[id].id_string);
+                perr(err_mess);
+                winfo[id].status = QUIT;
+                pthread_exit(NULL); 
+        }
 
         do  {
                 switch (winfo[id].status) {
@@ -699,8 +629,6 @@ void *sender_routine(void *args)
                                 }
 
                                 if (winfo[id].base == last_base_for_timeout) {
-
-                                        printf("counter %d\n", timeout_counter);
                                         
                                         if (pthread_mutex_unlock(&winfo[id].mutex)) {
                                                 snprintf(err_mess, ERR_SIZE, "{ERROR} %s Syncronization protocol for worker threads broken (worker_mutex)", winfo[id].id_string);
@@ -777,10 +705,10 @@ void *sender_routine(void *args)
 
 void exit_server(int status) 
 {
-        /* TODO: controllare che la chiusura avvenga con successo anche nel caso di errori e non segnale */
-        for (int i = 0; i < concurrenty_connections; ++i)
+        for (int i = 0; i < concurrenty_connections; ++i) {
                 if (winfo[i].status != FREE)
                         winfo[i].status = QUIT;
+        }
 
         for (int i = 0; i < concurrenty_connections; ++i) {
                 if (winfo[i].status != FREE) {
@@ -797,7 +725,7 @@ void exit_server(int status)
         free(config);
 
         pthread_rwlock_destroy(&tmp_ls_rwlock);
-
+ 
         exit(status);
 }
 
@@ -891,9 +819,21 @@ int init_socket(unsigned short int port)
 long get_available_worker(const struct sockaddr_in *addr, bool *already_handled_ptr)
 {
         long ret, i;
-        
-        ret = -1;
+
         i = 0;
+        *already_handled_ptr = false;
+
+        while (i < concurrenty_connections) {
+                if (memcmp(&winfo[i].client_sockaddr, addr, sizeof(struct sockaddr_in)) == 0) {
+                        *already_handled_ptr = true;
+                        return -1;
+                }
+
+                ++i;
+        }
+
+        i = 0;
+        ret = -1;
 
         while (i < concurrenty_connections) {
                 if (winfo[i].status == FREE) {
@@ -901,16 +841,6 @@ long get_available_worker(const struct sockaddr_in *addr, bool *already_handled_
                         ret = i;
                         break;
                 }
-
-                ++i;
-        }
-
-        i = 0;
-        *already_handled_ptr = false;
-
-        while (i < concurrenty_connections) {
-                if (memcmp(&winfo[i].client_sockaddr, addr, sizeof(struct sockaddr_in)) == 0)
-                        *already_handled_ptr = true;
 
                 ++i;
         }
@@ -1029,7 +959,7 @@ bool reset_worker_info(int id, bool need_destroy, bool need_create)
                 }
 
                 if (winfo[id].socket != -1)
-                        close(winfo[id].socket);
+                         close(winfo[id].socket);
         }
 
         if (need_create) {
@@ -1072,7 +1002,6 @@ bool init_worker_info(void)
                 return false;
         }
                 
-
         for (int i = 0; i < concurrenty_connections; ++i) {
                 memset(&winfo[i], 0x0, sizeof(struct worker_info));
                 winfo[i].port = START_WORKER_PORT + i;
@@ -1301,54 +1230,53 @@ bool acceptance_loop(int acc_socket)
                         
                         if ((winfo_index = get_available_worker(&addr, &already_handled)) == -1) {
 
-                                #ifdef DEBUG
-                                printf("{DEBUG} [Main Thread] All workers are busy. Can't handle request\n");
-                                #endif
+                                if (already_handled) {
+                                        #ifdef DEBUG
+                                        printf("{DEBUG} [Main Thread] Reject request from %s:%d (already handled)\n", 
+                                                inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
+                                        #endif
+                                } else {
+                                        #ifdef DEBUG
+                                        printf("{DEBUG} [Main Thread] All workers are busy. Can't handle request\n");
+                                        #endif
+                                }
 
                                 continue;
                         }
 
-                        if (!already_handled) {
-                                
-                                #ifdef DEBUG
-                                printf("[Main Thread] Accept request from %s:%d\n", inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
-                                #endif
-
-                                can_open = true;
-                                if (get_message_type(header) != PUT) {
-
-                                        if (!start_sender(winfo_index, &addr, get_message_type(header), payload, &can_open)) {
-                                                if (!can_open) {
-                                                        if (!send_error_message(winfo_index, acc_socket))
-                                                                return false; 
-                                                } else {   
-                                                        return false;
-                                                }
-                                        } else {
-                                                FD_SET(winfo[winfo_index].socket, &all_fds);
-        
-                                                if (winfo[winfo_index].socket > maxfd) 
-                                                        maxfd = winfo[winfo_index].socket;
-                                        }
-
-                                } else {
-
-                                        if (!start_receiver(winfo_index, &addr, payload, &can_open)) {
-                                                if (!can_open) {
-                                                        if (!send_error_message(winfo_index, acc_socket))
-                                                                return false; 
-                                                } else {   
-                                                        return false;
-                                                }
-                                        }
-
-                                }
-                        }
-
                         #ifdef DEBUG
-                        else
-                                printf("[Main Thread] Reject request from %s:%d\n", inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
+                        printf("[Main Thread] Accept request from %s:%d\n", inet_ntoa(addr.sin_addr), ntohs(addr.sin_port));
                         #endif
+
+                        can_open = true;
+                        if (get_message_type(header) != PUT) {
+
+                                if (!start_sender(winfo_index, &addr, get_message_type(header), payload, &can_open)) {
+                                        if (!can_open) {
+                                                if (!send_error_message(winfo_index, acc_socket))
+                                                        return false; 
+                                        } else {   
+                                                return false;
+                                        }
+                                } else {
+                                        FD_SET(winfo[winfo_index].socket, &all_fds);
+
+                                        if (winfo[winfo_index].socket > maxfd) 
+                                                maxfd = winfo[winfo_index].socket;
+                                }
+
+                        } else {
+
+                                if (!start_receiver(winfo_index, &addr, payload, &can_open)) {
+                                        if (!can_open) {
+                                                if (!send_error_message(winfo_index, acc_socket))
+                                                        return false; 
+                                        } else {   
+                                                return false;
+                                        }
+                                }
+
+                        }
                 }  
 
                 for (int i = 0; (i < concurrenty_connections) && (ready_fds > 0); ++i) {
@@ -1396,7 +1324,7 @@ int main(int argc, char **argv)
                 exit_server(EXIT_FAILURE);
         }
 
-        if (!setup_signals())
+        if (!setup_signals(&t_set, sig_handler))
                 exit_server(EXIT_FAILURE);
 
         if (pthread_rwlock_init(&tmp_ls_rwlock, NULL)) {

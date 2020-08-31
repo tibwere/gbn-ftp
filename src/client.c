@@ -15,7 +15,8 @@
 #include <libgen.h>
 #include <pthread.h>
 #include <sys/time.h>
-
+#include <signal.h>
+#include <errno.h>
 
 #include "gbnftp.h" 
 #include "common.h"
@@ -56,11 +57,14 @@ int sockfd;
 struct gbn_config *config;
 struct sockaddr_in request_sockaddr;
 unsigned short int server_port;
+struct put_args *args;
+sigset_t t_set;
 
 
-ssize_t send_file_chunk(struct put_args *args);
-bool handle_retransmit(struct put_args *args);
-void *put_sender_routine(void *args);
+void sig_handler(int signo); 
+ssize_t send_file_chunk(void);
+bool handle_retransmit(void);
+void *put_sender_routine(void *dummy);
 void exit_client(int status); 
 enum app_usages parse_cmd(int argc, char **argv, char *address);
 bool set_sockadrr_in(struct sockaddr_in *server_sockaddr, const char *address_string, unsigned short int port);
@@ -68,16 +72,25 @@ ssize_t send_request(enum message_type type, const char *filename, size_t filena
 ssize_t send_ack(enum message_type type, unsigned int seq_num, bool is_last);
 bool request_loop(int writefd, enum message_type type, const char *filename, enum connection_status *status_ptr, bool *delete_file);
 bool lg_connect_loop(int writefd, enum message_type type, enum connection_status *status_ptr);
-bool p_connect_loop(struct put_args *args);
+bool p_connect_loop(void);
 bool list(void);
 bool get_file(void);
 struct put_args *init_put_args(void);
-bool dispose_put_args(struct put_args *pa);
+bool dispose_put_args(void);
 bool put_file(void);
 bool check_installation(void);
 
 
-ssize_t send_file_chunk(struct put_args *args)
+void sig_handler(int signo) 
+{
+        #ifdef DEBUG
+        printf("\n\n{DEBUG} [Main Thread] Captured %d signal\n", signo);
+        #endif
+        
+        exit_client(EXIT_SUCCESS);
+}
+
+ssize_t send_file_chunk(void)
 {
         gbn_ftp_header_t header;
         char buff[CHUNK_SIZE];
@@ -132,7 +145,7 @@ ssize_t send_file_chunk(struct put_args *args)
         return 0;    
 }
 
-bool handle_retransmit(struct put_args *args) 
+bool handle_retransmit(void) 
 {
         unsigned int base; 
         unsigned int next_seq_num;
@@ -156,68 +169,72 @@ bool handle_retransmit(struct put_args *args)
         next_seq_num = args->next_seq_num;
 
         for (unsigned int i = base; i < next_seq_num; ++i)
-                if (send_file_chunk(args) == -1)
+                if (send_file_chunk() == -1)
                         return false;
 
         return true;
 }
 
-void *put_sender_routine(void *args) 
+void *put_sender_routine(__attribute__((unused)) void *dummy) 
 {
-        struct put_args *arguments = (struct put_args *)args;
         struct timeval tv;
         bool has_unlocked;
         unsigned short timeout_counter = 0;
-        unsigned int last_base_for_timeout = arguments->base;
+        unsigned int last_base_for_timeout = args->base;
+
+        if (pthread_sigmask(SIG_BLOCK, &t_set, NULL)) {
+                perr("{ERROR} [Sender Thread] Unable to set sigmask for worker thread");
+                pthread_exit(NULL); 
+        }
 
         do  {
-                switch (arguments->status) {
+                switch (args->status) {
 
                         case CONNECTED:
 
                                 has_unlocked = false;
-                                if (pthread_mutex_lock(&arguments->mutex)) {
+                                if (pthread_mutex_lock(&args->mutex)) {
                                         perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
-                                        arguments->status = QUIT;
+                                        args->status = QUIT;
                                 }
 
-                                if (arguments->next_seq_num < arguments->base + config->N) {
+                                if (args->next_seq_num < args->base + config->N) {
                                         
-                                        if (pthread_mutex_unlock(&arguments->mutex)) {
+                                        if (pthread_mutex_unlock(&args->mutex)) {
                                                 perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
-                                                arguments->status = QUIT;
+                                                args->status = QUIT;
                                         }
                                         has_unlocked = true;
 
-                                        if (send_file_chunk(arguments) == -1)
-                                                arguments->status = QUIT;
+                                        if (send_file_chunk() == -1)
+                                                args->status = QUIT;
                                 }
 
                                 if (!has_unlocked) {
-                                        if (pthread_mutex_unlock(&arguments->mutex)) {
+                                        if (pthread_mutex_unlock(&args->mutex)) {
                                                 perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
-                                                arguments->status = QUIT;
+                                                args->status = QUIT;
                                         } 
                                         has_unlocked = true;                                      
                                 }
 
                                 has_unlocked = false;
-                                if (pthread_mutex_lock(&arguments->mutex)) {
+                                if (pthread_mutex_lock(&args->mutex)) {
                                         perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
-                                        arguments->status = QUIT;
+                                        args->status = QUIT;
                                 } 
 
-                                if (arguments->status != QUIT) {
+                                if (args->status != QUIT) {
                                         gettimeofday(&tv, NULL);
 
-                                        if (elapsed_usec(&arguments->start_timer, &tv) >= config->rto_usec)
-                                                arguments->status = TIMEOUT;
+                                        if (elapsed_usec(&args->start_timer, &tv) >= config->rto_usec)
+                                                args->status = TIMEOUT;
 
                                 }
 
-                                if (pthread_mutex_unlock(&arguments->mutex)) {
+                                if (pthread_mutex_unlock(&args->mutex)) {
                                         perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
-                                        arguments->status = QUIT;
+                                        args->status = QUIT;
                                 }
                                 has_unlocked = true;
 
@@ -226,40 +243,40 @@ void *put_sender_routine(void *args)
                         case TIMEOUT:
 
                                 #ifdef DEBUG
-                                printf("{DEBUG} [Sender Thread] Timeout event (%d)\n", arguments->base);
+                                printf("{DEBUG} [Sender Thread] Timeout event (%d)\n", args->base);
                                 #endif       
 
                                 has_unlocked = false;
-                                if (pthread_mutex_lock(&arguments->mutex)) {
+                                if (pthread_mutex_lock(&args->mutex)) {
                                         perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
-                                        arguments->status = QUIT;
+                                        args->status = QUIT;
                                 }
 
-                                if (arguments->base == last_base_for_timeout) {
+                                if (args->base == last_base_for_timeout) {
                                         
-                                        if (pthread_mutex_unlock(&arguments->mutex)) {
+                                        if (pthread_mutex_unlock(&args->mutex)) {
                                                 perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
-                                                arguments->status = QUIT;
+                                                args->status = QUIT;
                                         }
                                         has_unlocked = true;
 
                                         if (timeout_counter < MAX_TO) {
-                                                if (!handle_retransmit(arguments))
-                                                        arguments->status = QUIT;
+                                                if (!handle_retransmit())
+                                                        args->status = QUIT;
                                         
                                         } else  {
 
                                                 #ifdef DEBUG
-                                                printf("{DEBUG} [Sender Thread] Maximum number of timeout reached for %d, abort\n", arguments->base);
+                                                printf("{DEBUG} [Sender Thread] Maximum number of timeout reached for %d, abort\n", args->base);
                                                 #endif
 
                                                 has_unlocked = false;
-                                                if (pthread_mutex_lock(&arguments->mutex))
+                                                if (pthread_mutex_lock(&args->mutex))
                                                         perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
 
-                                                arguments->status = QUIT;
+                                                args->status = QUIT;
 
-                                                if (pthread_mutex_unlock(&arguments->mutex))
+                                                if (pthread_mutex_unlock(&args->mutex))
                                                         perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
 
                                                 has_unlocked = true;        
@@ -267,16 +284,16 @@ void *put_sender_routine(void *args)
                                         ++timeout_counter;
                                 } else {
 
-                                        if (pthread_mutex_unlock(&arguments->mutex)) {
+                                        if (pthread_mutex_unlock(&args->mutex)) {
                                                 perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
-                                                arguments->status = QUIT;
+                                                args->status = QUIT;
                                         }
                                         has_unlocked = true;
 
                                         timeout_counter = 1;
                                         
-                                        if (!handle_retransmit(arguments))
-                                                arguments->status = QUIT;
+                                        if (!handle_retransmit())
+                                                args->status = QUIT;
                                 }
 
                                 break;
@@ -285,10 +302,10 @@ void *put_sender_routine(void *args)
                                 break;
                 }
 
-        } while (arguments->status != QUIT);
+        } while (args->status != QUIT);
 
         if (!has_unlocked) {
-                if (pthread_mutex_unlock(&arguments->mutex))
+                if (pthread_mutex_unlock(&args->mutex))
                         perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");               
         }
 
@@ -302,6 +319,11 @@ void *put_sender_routine(void *args)
 void exit_client(int status) 
 {
         /* TODO: implementare chiusura pulita */
+
+        dispose_put_args();
+
+        free(config);
+
         close(sockfd);
         exit(status);
 }
@@ -419,10 +441,15 @@ ssize_t send_ack(enum message_type type, unsigned int seq_num, bool is_last)
         set_message_type(&header, type);
 
         if ((wsize = gbn_send(sockfd, header, NULL, 0, NULL, config)) == -1) {
-                snprintf(error_message, ERR_SIZE, "{ERROR} [Main Thread] Unable to send ack to server (OP %d)", type);
-                perr(error_message);
+                if (errno != ECONNREFUSED) {
+                        snprintf(error_message, ERR_SIZE, "{ERROR} [Main Thread] Unable to send ack to server (OP %d)", type);
+                        perr(error_message);
+                }
+
                 return -1;
         }
+
+        printf("wsize = %ld\n", wsize);
 
         #ifdef DEBUG
         printf("{DEBUG} [Main Thread] ACK no. %d %ssent\n", seq_num, (wsize == 0) ? "not " : "");
@@ -544,8 +571,12 @@ bool lg_connect_loop(int writefd, enum message_type type, enum connection_status
                         
                                 // Al termine invio 4 ACK per aumentare la probabilità di ricezione da parte del server
                                 for (int i = 0; i < LAST_MESSAGE_LOOP - 1; ++i) {
-                                        if (send_ack(type, last_acked_seq_num, true) == -1)
-                                                return false;
+                                        if (send_ack(type, last_acked_seq_num, true) == -1) {
+                                                if (errno == ECONNREFUSED)
+                                                        break;
+                                                else
+                                                        return false;
+                                        }
                                 }
                         }
 
@@ -558,7 +589,7 @@ bool lg_connect_loop(int writefd, enum message_type type, enum connection_status
         return true;
 }
 
-bool p_connect_loop(struct put_args *args)
+bool p_connect_loop(void)
 {
         gbn_ftp_header_t recv_header;
 
@@ -734,15 +765,19 @@ struct put_args *init_put_args(void)
         return pa;
 }
 
-bool dispose_put_args(struct put_args *pa)
+bool dispose_put_args(void)
 {
-        if (pthread_mutex_destroy(&pa->mutex)) {
-                perr("{ERROR} [Main Thread] unable to free metadata used for PUT operation");
-                return false;
-        }
+        if (args != NULL) {
+                if (pthread_mutex_destroy(&args->mutex)) {
+                        perr("{ERROR} [Main Thread] unable to free metadata used for PUT operation");
+                        return false;
+                }
 
-        close(pa->fd);
-        free(pa);
+                close(args->fd);
+                free(args);
+                
+                args = NULL;
+        }
 
         return true;
 }
@@ -752,7 +787,7 @@ bool put_file(void)
         size_t filename_size;
         char filename[CHUNK_SIZE];
         char path[PATH_SIZE];
-        struct put_args *args;
+        
 
         memset(path, 0x0, PATH_SIZE);
         memset(filename, 0x0, CHUNK_SIZE);
@@ -786,14 +821,19 @@ bool put_file(void)
                 return false;
         }
 
-        if (!p_connect_loop(args))
+        if (!p_connect_loop())
                 return false;
 
         printf("File succesfully uploaded\nPress return to get back to menu\n");
         getchar();
 
         pthread_join(args->tid, NULL);
-        dispose_put_args(args);
+
+        #ifdef DEBUG
+        printf("{DEBUG} [Main Thread] Joined sender thread\n");
+        #endif
+
+        dispose_put_args();
         close(sockfd);
         return true;
 }
@@ -825,6 +865,9 @@ int main(int argc, char **argv)
                 fprintf(stderr, "Client not installed yet!\n\nPlease run the following command:\n\tsh /path/to/script/install-client.sh\n");
                 exit_client(EXIT_FAILURE);
         }
+
+        if (!setup_signals(&t_set, sig_handler))
+                exit_client(EXIT_FAILURE);
 
         srand(time(0));
 
@@ -910,6 +953,6 @@ int main(int argc, char **argv)
                 
         } while (choice != 'Q');   
   
-        return 0;
+        exit_client(EXIT_SUCCESS);
 }
 

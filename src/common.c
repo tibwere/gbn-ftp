@@ -3,6 +3,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <errno.h>
+#include <signal.h>
 
 #include "gbnftp.h"
 #include "common.h"
@@ -113,4 +114,83 @@ unsigned long elapsed_usec(const struct timeval *start, const struct timeval *st
         usec = stop->tv_usec - start->tv_usec;
 
         return sec * 1000000 + usec; 
+}
+
+bool setup_signals(sigset_t *thread_mask , void (*sig_handler)(int))
+{	
+	struct sigaction act;
+	
+	memset(&act, 0, sizeof(struct sigaction));
+        
+        act.sa_flags = 0;
+	act.sa_handler = sig_handler;
+
+        if (sigfillset(&act.sa_mask) == -1) {
+		perr("{ERROR} [Main Thread] failed to initialize signal mask for main thread");
+		return false;                
+        }
+
+	while (sigaction(SIGINT, &act, NULL) == -1) {
+		if (errno != EINTR) {
+			perr("{ERROR} [Main Thread] Unable to initialize signal management for main thread (SIGINT)");
+			return false;
+		}
+	}
+
+	while (sigaction(SIGQUIT, &act, NULL) == -1) {
+		if (errno != EINTR) {
+			perr("{ERROR} [Main Thread] Unable to initialize signal management for main thread (SIGQUIT)");
+			return false;
+		}
+	}	
+
+	while (sigaction(SIGTERM, &act, NULL) == -1) {
+		if (errno != EINTR) {
+			perr("{ERROR} [Main Thread] Unable to initialize signal management for main thread (SIGTERM)");
+			return false;
+		}
+	}						
+			
+	while (sigaction(SIGHUP, &act, NULL) == -1) {
+		if (errno != EINTR) {
+			perr("{ERROR} [Main Thread] Unable to initialize signal management for main thread (SIGHUP)");
+			return false;
+		}
+	}	
+	
+	act.sa_handler = SIG_IGN;
+	
+	while (sigaction(SIGPIPE, &act, NULL) == -1) {
+		if (errno != EINTR) {
+			perr("{ERROR} [Main Thread] Unable to set to ignore SIGPIPE");
+			return false;
+		}
+	}
+
+	if (sigemptyset(thread_mask) == -1) {
+		perr("{ERROR} [Main Thread] failed to initialize signal mask for worker thread");
+		return false;
+	}
+	
+	if (sigaddset(thread_mask, SIGINT) == -1) {
+		perr("{ERROR} [Main Thread] failed to initialize signal mask for worker thread");
+		return false;
+	}	
+	
+	if (sigaddset(thread_mask, SIGQUIT) == -1) {
+		perr("{ERROR} [Main Thread] failed to initialize signal mask for worker thread");
+		return false;
+	}	
+	
+	if (sigaddset(thread_mask, SIGTERM) == -1) {
+		perr("{ERROR} [Main Thread] failed to initialize signal mask for worker thread");
+		return false;
+	}
+		
+	if (sigaddset(thread_mask, SIGHUP) == -1) {
+		perr("{ERROR} [Main Thread] failed to initialize signal mask for worker thread");
+		return false;
+	} 
+
+        return true;			
 }
