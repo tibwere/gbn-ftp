@@ -348,7 +348,7 @@ enum app_usages parse_cmd(int argc, char **argv, char *address)
                 {0,             0,                      0, 0}
         };
 
-        while ((opt = getopt_long(argc, argv, "a:p:N:t:A:P:hvV", long_options, NULL)) != -1) {
+        while ((opt = getopt_long(argc, argv, "a:p:N:t:AP:hvV", long_options, NULL)) != -1) {
                 switch (opt) {
                         case 'a':
                                 strncpy(address, optarg, ADDRESS_STRING_LENGTH);
@@ -448,8 +448,6 @@ ssize_t send_ack(enum message_type type, unsigned int seq_num, bool is_last)
 
                 return -1;
         }
-
-        printf("wsize = %ld\n", wsize);
 
         #ifdef DEBUG
         printf("{DEBUG} [Main Thread] ACK no. %d %ssent\n", seq_num, (wsize == 0) ? "not " : "");

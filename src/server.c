@@ -747,7 +747,7 @@ enum app_usages parse_cmd(int argc, char **argv)
                 {0,             0,                      0, 0}
         };
 
-        while ((opt = getopt_long(argc, argv, "p:N:t:A:P:s:hvV", long_options, NULL)) != -1) {
+        while ((opt = getopt_long(argc, argv, "p:N:t:AP:s:hvV", long_options, NULL)) != -1) {
                 switch (opt) {
                         case 'p':
                                 acceptance_port = strtol(optarg, NULL, 10);

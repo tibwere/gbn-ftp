@@ -25,6 +25,9 @@
 #define DEFAULT_PORT 2929
 #define CHUNK_SIZE 512
 
+#define ALPHA 0.125
+#define BETA 0.25
+
 struct gbn_config {
         unsigned int N;
         unsigned long rto_usec;
