@@ -30,9 +30,18 @@
 
 struct gbn_config {
         unsigned int N;
-        unsigned long rto_usec;
+        long rto_usec;
         bool is_adaptive;
         float probability;
+};
+
+struct gbn_adaptive_timeout {
+        struct timeval saved_tv;
+        unsigned int seq_num;
+        bool restart;
+        long sampleRTT;
+        long estimatedRTT;
+        long devRTT;
 };
 
 /* STRUTTURA DELL'HEADER DEL PROTOCOLLO

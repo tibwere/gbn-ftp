@@ -318,11 +318,21 @@ void *put_sender_routine(__attribute__((unused)) void *dummy)
 
 void exit_client(int status) 
 {
-        /* TODO: implementare chiusura pulita */
+// int sockfd;
+// struct gbn_config *config;
+// struct sockaddr_in request_sockaddr;
+// unsigned short int server_port;
+// struct put_args *args;
+// sigset_t t_set;
 
         dispose_put_args();
 
         free(config);
+
+        if (args) {
+
+                free(args);
+        }
 
         close(sockfd);
         exit(status);
@@ -677,11 +687,18 @@ bool list(void)
         if (!lg_connect_loop(STDIN_FILENO, LIST, &status))
                 return false;
 
+        if (pthread_sigmask(SIG_BLOCK, &t_set, NULL))
+                return false;
+
         printf("\n\nPress any key to get back to menu ");
         fflush(stdout);
         getchar();
 
         close(sockfd);
+
+        if (pthread_sigmask(SIG_UNBLOCK, &t_set, NULL))
+                return false;
+
         return true;
 }
 
@@ -728,12 +745,19 @@ bool get_file(void)
         if (!lg_connect_loop(fd, GET, &status))
                 return false;
 
-        printf("\n\nFile succesfully downloaded\nPress return to get back to menu ");
+        if (pthread_sigmask(SIG_BLOCK, &t_set, NULL))
+                return false;
+
+        printf("\n\nFile succesfully downloaded\nPress return to get back to menu");
         fflush(stdout);
         getchar();
 
         close(fd);
         close(sockfd);
+
+        if (pthread_sigmask(SIG_UNBLOCK, &t_set, NULL))
+                return false;
+
         return true;
 }
 
@@ -822,6 +846,9 @@ bool put_file(void)
         if (!p_connect_loop())
                 return false;
 
+        if (pthread_sigmask(SIG_BLOCK, &t_set, NULL))
+                return false;
+
         printf("File succesfully uploaded\nPress return to get back to menu\n");
         getchar();
 
@@ -833,6 +860,10 @@ bool put_file(void)
 
         dispose_put_args();
         close(sockfd);
+
+        if (pthread_sigmask(SIG_UNBLOCK, &t_set, NULL))
+                return false;
+
         return true;
 }
 

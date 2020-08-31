@@ -148,6 +148,7 @@ ssize_t gbn_send(int socket, gbn_ftp_header_t header, const void *payload, size_
                 return send_size;
                         
         } else {
+                free(message);
                 return 0;
         }
 }

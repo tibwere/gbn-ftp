@@ -99,7 +99,7 @@ double rand_double(void)
         return (double) rand() / (double) RAND_MAX;
 }
 
-unsigned long elapsed_usec(const struct timeval *start, const struct timeval *stop)
+long elapsed_usec(const struct timeval *start, const struct timeval *stop)
 {
         unsigned long sec;
         unsigned long usec;
@@ -193,4 +193,8 @@ bool setup_signals(sigset_t *thread_mask , void (*sig_handler)(int))
 	} 
 
         return true;			
+}
+
+long abs_val(long value) {
+        return (value >= 0) ? value : -value;
 }
