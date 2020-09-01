@@ -112,15 +112,10 @@ ssize_t send_file_chunk(void)
         if (rsize > 0) {
 
                 set_message_type(&header, PUT);
-                set_sequence_number(&header, args->next_seq_num++);
+                set_sequence_number(&header, args->next_seq_num);
                 set_ack(&header, false);      
-                set_err(&header, false);  
-                
-                if (rsize < CHUNK_SIZE) {
-                        set_last(&header, true);
-                } else {
-                        set_last(&header, false);
-                }   
+                set_err(&header, false);
+                set_last(&header, (rsize < CHUNK_SIZE));   
 
                 if ((wsize = gbn_send(sockfd, header, buff, rsize, NULL)) == -1) {
                         perr("{ERROR} [Sender Thread] Unable to send chunk to server");
@@ -136,6 +131,14 @@ ssize_t send_file_chunk(void)
                         return -1;
                 }
 
+                // if (config->is_adaptive) {
+                //         if (adapt.restart) {
+                //                 gettimeofday(&adapt.saved_tv, NULL);
+                //                 adapt.seq_num = winfo.next_seq_num;
+                //                 adapt.restart = false;
+                //         }
+                // }
+
                 if (args->base == args->next_seq_num) 
                         gettimeofday(&args->start_timer, NULL);
 
@@ -143,6 +146,8 @@ ssize_t send_file_chunk(void)
                         perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
                         return -1;
                 }
+
+                args->next_seq_num++;
 
                 return wsize; 
         }  
@@ -161,8 +166,8 @@ bool handle_retransmit(void)
         }
 
         base = args->base - 1;
+        next_seq_num = args->next_seq_num - 1;
         args->next_seq_num = args->base;
-        args->status = CONNECTED;
         lseek(args->fd, base * CHUNK_SIZE, SEEK_SET);
         gettimeofday(&args->start_timer, NULL);
 
@@ -171,11 +176,21 @@ bool handle_retransmit(void)
                 return -1;
         }
 
-        next_seq_num = args->next_seq_num;
-
         for (unsigned int i = base; i < next_seq_num; ++i)
                 if (send_file_chunk() == -1)
                         return false;
+
+        if (pthread_mutex_lock(&args->mutex)) {
+                perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
+                return -1;
+        }
+
+        args->status = CONNECTED;
+
+        if (pthread_mutex_unlock(&args->mutex)) {
+                perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
+                return -1;
+        }
 
         return true;
 }

@@ -23,5 +23,9 @@ double rand_double(void);
 long elapsed_usec(const struct timeval *start, const struct timeval *stop);
 bool setup_signals(sigset_t *thread_mask , void (*sig_handler)(int));
 long abs_val(long value);
+enum connection_status get_status_safe(volatile enum connection_status *status, pthread_mutex_t *mutex);
+void set_status_safe(volatile enum connection_status *old_status, enum connection_status new_status, pthread_mutex_t *mutex);
+unsigned int get_gbn_param_safe(volatile unsigned int *param, pthread_mutex_t *mutex);
+void set_gbn_param_safe(volatile unsigned int *old_param, volatile unsigned int new_param, pthread_mutex_t *mutex);
 
 #endif

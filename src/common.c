@@ -4,6 +4,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <signal.h>
+#include <pthread.h>
 
 #include "gbnftp.h"
 #include "common.h"
@@ -197,4 +198,40 @@ bool setup_signals(sigset_t *thread_mask , void (*sig_handler)(int))
 
 long abs_val(long value) {
         return (value >= 0) ? value : -value;
+}
+
+enum connection_status get_status_safe(volatile enum connection_status *status, pthread_mutex_t *mutex)
+{
+        enum connection_status s = QUIT;
+
+        pthread_mutex_lock(mutex);
+        s = *status;
+        pthread_mutex_unlock(mutex);
+
+        return s;
+}
+
+void set_status_safe(volatile enum connection_status *old_status, enum connection_status new_status, pthread_mutex_t *mutex)
+{
+        pthread_mutex_lock(mutex);
+        *old_status = new_status;
+        pthread_mutex_unlock(mutex);
+}
+
+unsigned int get_gbn_param_safe(volatile unsigned int *param, pthread_mutex_t *mutex)
+{
+        unsigned int p = -1;
+
+        pthread_mutex_lock(mutex);
+        p = *param;
+        pthread_mutex_unlock(mutex);
+
+        return p;
+}
+
+void set_gbn_param_safe(volatile unsigned int *old_param, volatile unsigned int new_param, pthread_mutex_t *mutex)
+{
+        pthread_mutex_lock(mutex);
+        *old_param = new_param;
+        pthread_mutex_unlock(mutex);
 }

@@ -9,8 +9,9 @@ BDIR = ./bin
 SDIR = ./src
 LIBS = -pthread -lm
 DEPS = ./include/common.h ./include/gbnftp.h
-S_OBJ = ./obj/server.o ./obj/common.o ./obj/gbnftp.o
-C_OBJ = ./obj/client.o ./obj/common.o ./obj/gbnftp.o
+SOBJ = ./obj/server.o 
+COBJ = ./obj/client.o
+OBJ = ./obj/common.o ./obj/gbnftp.o
 SERVER = gbn-ftp-server
 CLIENT = gbn-ftp-client
 
@@ -19,10 +20,10 @@ $(ODIR)/%.o: $(SDIR)/%.c $(DEPS)
 
 all: $(SERVER) $(CLIENT)
 
-$(SERVER): $(S_OBJ)
+$(SERVER): $(SOBJ) $(OBJ)
 	$(CC) -o $(BDIR)/$@ $^ $(CFLAGS) $(LIBS)
 
-$(CLIENT): $(C_OBJ)
+$(CLIENT): $(COBJ) $(OBJ)
 	$(CC) -o $(BDIR)/$@ $^ $(CFLAGS) $(LIBS)
 
 .PHONY: clean
