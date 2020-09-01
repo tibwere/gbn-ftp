@@ -74,6 +74,6 @@ bool is_ack(gbn_ftp_header_t header);
 void set_err(gbn_ftp_header_t *header, bool is_err);
 bool is_err(gbn_ftp_header_t header);
 ssize_t gbn_send_with_prob(int socket, gbn_ftp_header_t header, const void *payload, size_t payload_length, const struct sockaddr_in *sockaddr_in, const struct gbn_config *configs);
-ssize_t gbn_receive(int socket, gbn_ftp_header_t *header, char *payload, const struct sockaddr_in *sockaddr_in);
+ssize_t gbn_receive(int socket, gbn_ftp_header_t *header, void *payload, const struct sockaddr_in *sockaddr_in);
 
 #endif

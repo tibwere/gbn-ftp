@@ -99,7 +99,7 @@ bool is_err(gbn_ftp_header_t header)
         return ((header & ERR_MASK) == ERR_MASK) ? true : false;
 }
 
-static char * make_segment(gbn_ftp_header_t header, const char *payload, size_t payload_size)
+static char * make_segment(gbn_ftp_header_t header, const void *payload, size_t payload_size)
 {
         char *message;
         long unsigned header_size = sizeof(gbn_ftp_header_t);
@@ -114,7 +114,7 @@ static char * make_segment(gbn_ftp_header_t header, const char *payload, size_t 
         return message;
 }
 
-static void get_segment(char *message, gbn_ftp_header_t *header, char *payload, size_t message_size)
+static void get_segment(char *message, gbn_ftp_header_t *header, void *payload, size_t message_size)
 {
         long unsigned header_size = sizeof(gbn_ftp_header_t);
         
@@ -151,7 +151,7 @@ ssize_t gbn_send_with_prob(int socket, gbn_ftp_header_t header, const void *payl
         }
 }
 
-ssize_t gbn_receive(int socket, gbn_ftp_header_t *header, char *payload, const struct sockaddr_in *sockaddr_in)
+ssize_t gbn_receive(int socket, gbn_ftp_header_t *header, void *payload, const struct sockaddr_in *sockaddr_in)
 {
         ssize_t received_size;
         socklen_t sockaddr_size = sizeof(struct sockaddr_in);

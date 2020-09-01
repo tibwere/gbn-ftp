@@ -27,5 +27,7 @@ enum connection_status get_status_safe(volatile enum connection_status *status, 
 void set_status_safe(volatile enum connection_status *old_status, enum connection_status new_status, pthread_mutex_t *mutex);
 unsigned int get_gbn_param_safe(volatile unsigned int *param, pthread_mutex_t *mutex);
 void set_gbn_param_safe(volatile unsigned int *old_param, volatile unsigned int new_param, pthread_mutex_t *mutex);
+bool can_send_more_segment_safe(volatile unsigned int *base, volatile unsigned int *next_seq_num, unsigned int N, pthread_mutex_t * mutex);
+long get_adaptive_rto_safe(struct gbn_adaptive_timeout *adapt, pthread_mutex_t *mutex);
 
 #endif

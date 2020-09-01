@@ -67,8 +67,6 @@ void sig_handler(int signo);
 #else
 void sig_handler(__attribute__((unused)) int signo);
 #endif 
-bool can_send_more_segment_safe(long id);
-long get_adaptive_rto_safe(long id);
 bool handle_retransmit(long id); 
 ssize_t send_file_chunk(long id);
 ssize_t lg_send_new_port_mess(long id);
@@ -106,27 +104,6 @@ void sig_handler(__attribute__((unused)) int signo)
         exit_server(EXIT_SUCCESS);
 }
 
-bool can_send_more_segment_safe(long id)
-{
-        bool retval = false;
-
-        pthread_mutex_lock(&winfo[id].mutex);
-        retval = winfo[id].next_seq_num < winfo[id].base + config->N;
-        pthread_mutex_unlock(&winfo[id].mutex);
-
-        return retval;
-}
-
-long get_adaptive_rto_safe(long id)
-{
-        long rto;
-
-        pthread_mutex_lock(&winfo[id].mutex);
-        rto = adapt[id].estimatedRTT + 4 * adapt[id].devRTT;
-        pthread_mutex_unlock(&winfo[id].mutex);        
-        
-        return rto;
-}
 
 bool handle_retransmit(long id) 
 {
@@ -269,7 +246,7 @@ ssize_t lg_send_new_port_mess(long id)
 
         while (get_status_safe(&winfo[id].status, &winfo[id].mutex) == REQUEST) {
 
-                if ((wsize = gbn_send(winfo[id].socket, header, NULL, 0, &winfo[id].client_sockaddr)) == -1) {
+                if ((wsize = gbn_send(winfo[id].socket, header, config, sizeof(struct gbn_config), &winfo[id].client_sockaddr)) == -1) {
                         snprintf(error_message, ERR_SIZE, "{ERROR} %s Unable to send NEW_PORT message", winfo[id].id_string);
                         perr(error_message);
                         return false;
@@ -334,7 +311,7 @@ ssize_t p_send_new_port_mess(long id)
 
         while (get_status_safe(&winfo[id].status, &winfo[id].mutex) == REQUEST) {
 
-                if ((wsize = gbn_send(winfo[id].socket, send_header, NULL, 0, &winfo[id].client_sockaddr)) == -1) {
+                if ((wsize = gbn_send(winfo[id].socket, send_header, config, sizeof(struct gbn_config), &winfo[id].client_sockaddr)) == -1) {
                         snprintf(error_message, ERR_SIZE, "{ERROR} %s Unable to send NEW_PORT message", winfo[id].id_string);
                         perr(error_message);
                         return false;
@@ -574,7 +551,7 @@ void *sender_routine(void *args)
         struct timeval tv;
         char err_mess[ERR_SIZE];
         unsigned short timeout_counter = 0;
-        unsigned int last_base_for_timeout = winfo[id].base;
+        unsigned int last_base_for_timeout = get_gbn_param_safe(&winfo[id].base, &winfo[id].mutex);
 
         if (pthread_sigmask(SIG_BLOCK, &t_set, NULL)) {
                 snprintf(err_mess, ERR_SIZE, "{ERROR} %s Unable to set sigmask for worker thread", winfo[id].id_string);
@@ -603,7 +580,7 @@ void *sender_routine(void *args)
 
                         case CONNECTED:
 
-                                if (can_send_more_segment_safe(id)) {
+                                if (can_send_more_segment_safe(&winfo[id].base, &winfo[id].next_seq_num, config->N, &winfo[id].mutex)) {
                                         if (send_file_chunk(id) == -1)
                                                 set_status_safe(&winfo[id].status, QUIT, &winfo[id].mutex);
   
@@ -613,14 +590,12 @@ void *sender_routine(void *args)
                                         gettimeofday(&tv, NULL);
 
                                         if (config->is_adaptive) {
-                                                // forse anche qui metto una sezione critica
-                                                if (elapsed_usec(&winfo[id].start_timer, &tv) >= get_adaptive_rto_safe(id))
+                                                if (elapsed_usec(&winfo[id].start_timer, &tv) >= get_adaptive_rto_safe(&adapt[id], &winfo[id].mutex))
                                                         set_status_safe(&winfo[id].status, TIMEOUT, &winfo[id].mutex);
                                         } else {
                                                 if (elapsed_usec(&winfo[id].start_timer, &tv) >= config->rto_usec)
                                                         set_status_safe(&winfo[id].status, TIMEOUT, &winfo[id].mutex);
                                         }
-
                                 }
 
                                 break;
@@ -636,7 +611,6 @@ void *sender_routine(void *args)
                                         if (timeout_counter < MAX_TO) {
                                                 if (!handle_retransmit(id))
                                                         set_status_safe(&winfo[id].status, QUIT, &winfo[id].mutex);
-                                        
                                         } else  {
                                                 #ifdef DEBUG
                                                 printf("{DEBUG} %s Maximum number of timeout reached for %d, abort\n", winfo[id].id_string, winfo[id].base);
@@ -681,7 +655,10 @@ void exit_server(int status)
 
         for (int i = 0; i < concurrenty_connections; ++i) {
                 if (get_status_safe(&winfo[i].status, &winfo[i].mutex) != FREE) {
-                        pthread_join(winfo[i].tid, NULL);
+                        
+                        if (winfo[i].tid)
+                                pthread_join(winfo[i].tid, NULL);
+
                         reset_worker_info(i, true, false);
 
                         #ifdef DEBUG
@@ -1062,7 +1039,6 @@ bool handle_recv(int id)
                 return false;                                
         }
 
-        // qua cambia minimizza la sezione critica!
         if (pthread_mutex_lock(&winfo[id].mutex)) {
                 snprintf(error_message, ERR_SIZE, "{ERROR} [Main Thread] Syncronization protocol for worker threads broken (worker_mutex_%d)", id);
                 perr(error_message);
@@ -1322,7 +1298,7 @@ int main(int argc, char **argv)
                         printf("\t\t-p [--port]\t<port>\t\tserver port\n");
                         printf("\t\t-N [--wndsize]\t<size>\t\tWindow size (for GBN)\n");
                         printf("\t\t-t [--rtousec]\t<timeout>\tRetransmition timeout [usec] (for GBN)\n");
-                        printf("\t\t-A [--adaptive]\t\t\tTimer adaptative\n");
+                        printf("\t\t-f [--fixed]\t\t\tTimer fixed\n");
                         printf("\t\t-P [--prob]\t<percentage>\tLoss probability\n");
                         printf("\t\t-s [--tpsize]\t<size>\t\tMax number of concurrenty connections\n");
                         printf("\t\t-v [--version]\t\t\tVersion of gbn-ftp-server\n");
