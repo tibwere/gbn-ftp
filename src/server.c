@@ -60,6 +60,7 @@ fd_set all_fds;
 pthread_rwlock_t tmp_ls_rwlock;
 sigset_t t_set;
 long concurrenty_connections;
+enum app_usages modality;
 
 
 #ifdef DEBUG
@@ -648,22 +649,24 @@ void *sender_routine(void *args)
 
 void exit_server(int status) 
 {
-        for (int i = 0; i < concurrenty_connections; ++i) {
-                if (get_status_safe(&winfo[i].status, &winfo[i].mutex) != FREE)
-                        set_status_safe(&winfo[i].status, QUIT, &winfo[i].mutex);
-        }
+        if (winfo) {
+                for (int i = 0; i < concurrenty_connections; ++i) {
+                        if (get_status_safe(&winfo[i].status, &winfo[i].mutex) != FREE)
+                                set_status_safe(&winfo[i].status, QUIT, &winfo[i].mutex);
+                }
 
-        for (int i = 0; i < concurrenty_connections; ++i) {
-                if (get_status_safe(&winfo[i].status, &winfo[i].mutex) != FREE) {
-                        
-                        if (winfo[i].tid)
-                                pthread_join(winfo[i].tid, NULL);
+                for (int i = 0; i < concurrenty_connections; ++i) {
+                        if (get_status_safe(&winfo[i].status, &winfo[i].mutex) != FREE) {
+                                
+                                if (winfo[i].tid)
+                                        pthread_join(winfo[i].tid, NULL);
 
-                        reset_worker_info(i, true, false);
+                                reset_worker_info(i, true, false);
 
-                        #ifdef DEBUG
-                        printf("{DEBUG} [Main thread] Disposed resources used by %d-th worker that's terminated\n", i);
-                        #endif
+                                #ifdef DEBUG
+                                printf("{DEBUG} [Main thread] Disposed resources used by %d-th worker that's terminated\n", i);
+                                #endif
+                        }
                 }
         }
 
@@ -679,7 +682,8 @@ void exit_server(int status)
 
         pthread_rwlock_destroy(&tmp_ls_rwlock);
 
-        printf("\n\nServer is shutting down ...\n\n");
+        if (modality == STANDARD)
+                printf("\n\nServer is shutting down ...\n\n");
  
         exit(status);
 }
@@ -1257,7 +1261,7 @@ bool check_installation(void)
 
 int main(int argc, char **argv)
 {
-        enum app_usages modality;
+        char choice;
 
         #ifdef DEBUG
         printf("*** DEBUG MODE ***\n\n\n");
@@ -1289,8 +1293,15 @@ int main(int argc, char **argv)
 
         switch(modality) {
                 case STANDARD: 
-                        printf("Configs:\n\tN: %u\n\trcvtimeout: %lu\n\tprobability: %.1f\n\tport: %u\n\tadapitve: %s\n\n", 
-                                config->N, config->rto_usec, config->probability, acceptance_port, (config->is_adaptive) ? "true" : "false");
+                        if ((choice = multi_choice("Do you want to see current settings profile?", "yn", 2)) == 'Y') {
+                                printf("\nList of current settings for server:\n\n");
+                                printf("N..........: %u\n", config->N);
+                                printf("rcvtimeout.: %lu\n", config->rto_usec);
+                                printf("probability: %.2f\n", config->probability);
+                                printf("port.......: %u\n", acceptance_port);
+                                printf("adapitve...: %s\n\n", (config->is_adaptive) ? "true" : "false");
+                        }
+ 
                         break;
                 case HELP:
                         printf("\n\tusage: gbn-ftp-server [options]\n");
@@ -1324,7 +1335,7 @@ int main(int argc, char **argv)
         if ((acceptance_sockfd = init_socket(acceptance_port)) == -1) 
                 exit_server(EXIT_FAILURE);
 
-        printf("Server is now listening ... ");
+        printf("\nServer is now listening ... ");
         fflush(stdout);
 
         if (!acceptance_loop(acceptance_sockfd))

@@ -23,6 +23,7 @@
 
 
 #define ADDRESS_STRING_LENGTH 1024
+#define HEADER_FILE_LENGTH 241
 
 #ifndef DEBUG
         #define cls() printf("\033[2J\033[H")
@@ -60,6 +61,8 @@ unsigned short int server_port;
 struct put_args *args;
 struct gbn_adaptive_timeout *adapt;
 sigset_t t_set;
+char header[HEADER_FILE_LENGTH];
+enum app_usages modality;
 
 
 void sig_handler(int signo); 
@@ -80,6 +83,7 @@ bool init_put_args(void);
 bool dispose_put_args(void);
 bool put_file(void);
 bool check_installation(void);
+bool load_header();
 
 #ifdef DEBUG
 void sig_handler(int signo) 
@@ -282,7 +286,8 @@ void exit_client(int status)
 
         close(sockfd);
 
-        printf("\nBye bye\n\n");
+        if (modality == STANDARD)
+                printf("\nBye bye\n\n");
         exit(status);
 }
 
@@ -439,7 +444,7 @@ bool request_loop(int writefd, enum message_type type, const char *filename, enu
                                 *status_ptr = CONNECTED;
 
                                 memcpy(config, &recv_config, sizeof(struct gbn_config));
-                                
+
                                 #ifdef DEBUG
                                 printf("{DEBUG} [Main Thread] Received NEW PORT message\n");
                                 #endif
@@ -594,7 +599,7 @@ bool p_connect_loop(void)
                                 adapt->restart = true;
 
                                 #ifdef DEBUG
-                                printf("{DEBUG} [Main Thread] Updated value of rto for %d-th connection: %ld usec\n", id, (adapt[id].estimatedRTT + 4 * adapt[id].devRTT));
+                                printf("{DEBUG} [Main Thread] Updated value of rto: %ld usec\n", (adapt->estimatedRTT + 4 * adapt->devRTT));
                                 #endif
                         }
                 }
@@ -849,11 +854,39 @@ bool check_installation(void)
                 return false;
 }
 
+bool load_header(void)
+{
+        int fd;
+        char path[PATH_SIZE];
+        ssize_t rsize;
+
+        memset(path, 0x0, PATH_SIZE);
+
+        if ((rsize = readlink("/proc/self/exe", path, PATH_SIZE)) == -1) {
+                perr("{ERROR} [Main Thread] Unable to locate exec path");
+                return false;
+        }
+
+        
+        if ((fd = open(strncat(dirname(path), "/../header.txt", 15), O_RDONLY)) == -1) {
+                perr("{ERROR} [Main Thread] Unable to load figlet header");
+                return false;
+        }
+
+        if (read(fd, header, HEADER_FILE_LENGTH) == -1) {
+                perr("{ERROR} [Main Thread] Unable to read from figlet file");
+                return false;
+        }
+
+        return true;
+}
+
 int main(int argc, char **argv)
 {
         char address_string[ADDRESS_STRING_LENGTH];
-        enum app_usages modality;
         char choice;
+        bool figlet_header;
+        bool is_first = true;
 
         #ifdef DEBUG
         printf("*** DEBUG MODE ***\n\n\n");
@@ -865,7 +898,7 @@ int main(int argc, char **argv)
         }
 
         if (!setup_signals(&t_set, sig_handler))
-                exit_client(EXIT_FAILURE);
+                exit_client(EXIT_FAILURE);        
 
         srand(time(0));
 
@@ -904,13 +937,21 @@ int main(int argc, char **argv)
                         abort();        
         }
 
+        figlet_header = load_header();
+
         if (!set_sockadrr_in(&request_sockaddr, address_string, server_port))
                 exit_client(EXIT_FAILURE);
 
         cls();
-        printf("Welcome to GBN-FTP service\n\n");
-
         do {
+                if (figlet_header)
+                        printf("%s\n\n", header);
+
+                if (is_first) {
+                        printf("Welcome to GBN-FTP service\n\n");
+                        is_first = false;
+                }
+
                 printf("*** What do you wanna do? ***\n\n");
                 printf("[L]IST all available files\n");
                 printf("[P]UT a file on the server\n");
@@ -942,8 +983,10 @@ int main(int argc, char **argv)
                                 abort();
                 }
 
+                #ifndef DEBUG
                 if (choice != 'Q')
                         cls();
+                #endif
                 
         } while (choice != 'Q');   
   
