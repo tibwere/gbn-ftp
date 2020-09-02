@@ -33,7 +33,7 @@
 
 #define l_request_loop(status_ptr) request_loop(-1, LIST, NULL, status_ptr, NULL)
 #define g_request_loop(writefd, filename, status_ptr, delete_file) request_loop(writefd, GET, filename, status_ptr, delete_file)
-#define p_request_loop(writefd, filename, status_ptr) request_loop(writefd, PUT, filename, status_ptr, NULL)
+#define p_request_loop(writefd, filename, status_ptr, already_exists) request_loop(writefd, PUT, filename, status_ptr, already_exists)
 #define gbn_send(socket, header, payload, payload_length, sockaddr_in) gbn_send_with_prob(socket, header, payload, payload_length, sockaddr_in, config)
 
 struct put_args {
@@ -74,7 +74,7 @@ enum app_usages parse_cmd(int argc, char **argv, char *address);
 bool set_sockadrr_in(struct sockaddr_in *server_sockaddr, const char *address_string, unsigned short int port);
 ssize_t send_request(enum message_type type, const char *filename, size_t filename_length);
 ssize_t send_ack(enum message_type type, unsigned int seq_num, bool is_last);
-bool request_loop(int writefd, enum message_type type, const char *filename, enum connection_status *status_ptr, bool *delete_file);
+bool request_loop(int writefd, enum message_type type, const char *filename, enum connection_status *status_ptr, bool *error_ret);
 bool lg_connect_loop(int writefd, enum message_type type, enum connection_status *status_ptr);
 bool p_connect_loop(void);
 bool list(void);
@@ -389,9 +389,8 @@ ssize_t send_ack(enum message_type type, unsigned int seq_num, bool is_last)
                 if (errno != ECONNREFUSED) {
                         snprintf(error_message, ERR_SIZE, "{ERROR} [Main Thread] Unable to send ack to server (OP %d)", type);
                         perr(error_message);
-                }
-
-                return -1;
+                        return -1;
+                }                
         }
 
         #ifdef DEBUG
@@ -401,7 +400,7 @@ ssize_t send_ack(enum message_type type, unsigned int seq_num, bool is_last)
         return wsize;
 }
 
-bool request_loop(int writefd, enum message_type type, const char *filename, enum connection_status *status_ptr, bool *delete_file)
+bool request_loop(int writefd, enum message_type type, const char *filename, enum connection_status *status_ptr, bool *error_ret)
 {
         struct timeval tv;
         int retval;
@@ -457,7 +456,7 @@ bool request_loop(int writefd, enum message_type type, const char *filename, enu
                                         return false;
                         }
 
-                        if ((get_sequence_number(recv_header) == 0) && !is_ack(recv_header) && (recv_size - header_size == sizeof(struct gbn_config)) && is_err(recv_header)) {
+                        if ((get_sequence_number(recv_header) == 0) && !is_ack(recv_header) && (recv_size - header_size == 0) && is_err(recv_header)) {
                                 
                                 #ifdef DEBUG
                                 printf("{DEBUG} [Main Thread] Received error message\n");
@@ -466,11 +465,9 @@ bool request_loop(int writefd, enum message_type type, const char *filename, enu
                                 if (writefd != -1)
                                         close(writefd);
                                 
-                                if (type == GET)
-                                        *delete_file = true;
+                                if (type != LIST)
+                                        *error_ret = true;
 
-                                fprintf(stderr, "Selected file does not exists on server\nPress enter to get back to menu ");
-                                getchar();
                                 return false;
                         }
                 }
@@ -690,6 +687,8 @@ bool get_file(void)
 
         if (!g_request_loop(fd, filename, &status, &delete_file)) {
                 if (delete_file) {
+                        printf("Selected file does not exists on server\nPress enter to get back to menu ");
+                        getchar();
                         remove(path);
                         return true;
                 } else {
@@ -783,34 +782,58 @@ bool put_file(void)
         size_t filename_size;
         char filename[CHUNK_SIZE];
         char path[PATH_SIZE];
-        
-        memset(path, 0x0, PATH_SIZE);
-        memset(filename, 0x0, CHUNK_SIZE);
+        char choice;
+        bool already_exists = false;
 
         if (!init_put_args())
                 return false;
 
-        cls();
-        printf("Which file do you want to upload to server (full path)? ");
-        fflush(stdout);
-        get_input(PATH_SIZE, path, true);
+        while(true) {
+        
+                memset(path, 0x0, PATH_SIZE);
+                memset(filename, 0x0, CHUNK_SIZE);
 
-        printf("Choose the name for the upload (default: %s)? ", basename(path));
-        fflush(stdout);
-        filename_size = get_input(CHUNK_SIZE, filename, false);
+                cls();
+                printf("Which file do you want to upload to server (full path)? ");
+                fflush(stdout);
+                get_input(PATH_SIZE, path, true);
 
-        if((args->fd = open(path, O_RDONLY)) == -1) {
-                perr("{ERROR} [Main Thread] Unable to open chosen file");
-                return false;
-        } 
+                printf("Choose the name for the upload (default: %s)? ", basename(path));
+                fflush(stdout);
+                filename_size = get_input(CHUNK_SIZE, filename, false);
+
+                if((args->fd = open(path, O_RDONLY)) == -1) {
+                        if (errno == ENOENT) {
+                                printf("Selected file does not exists\n");
+                                choice = multi_choice("Do you want to retry?", "yn", 2);
+
+                                if (choice == 'Y')
+                                        continue;
+                                else
+                                        return false;
+
+                        }
+                        perr("{ERROR} [Main Thread] Unable to open chosen file");
+                        return false;
+                } 
+
+                break;
+        }
 
         if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
                 perr("{ERROR [Main Thread] Unable to get socket file descriptor (REQUEST)");
                 return false;
         }
 
-        if (!p_request_loop(args->fd, (filename_size) ? filename : basename(path), &args->status))
-                return false;
+        if (!p_request_loop(args->fd, (filename_size) ? filename : basename(path), &args->status, &already_exists)) {
+                if (already_exists) {
+                        printf("Selected file already exists on server\nPress enter to get back to menu ");
+                        getchar();
+                        return true;
+                } else {
+                        return false;
+                }                
+        }
 
         if (pthread_create(&args->tid, NULL, put_sender_routine, args)) {
                 perr("{ERROR} [Main Thread] Unable to spawn sender thread");

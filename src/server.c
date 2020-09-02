@@ -161,7 +161,7 @@ ssize_t send_file_chunk(long id)
                 if ((rsize = read(winfo[id].fd, buff, CHUNK_SIZE)) == -1) {
                         snprintf(error_message, ERR_SIZE, "{ERROR} %s Unable to read from selected file", winfo[id].id_string);
                         perr(error_message);
-                        return -1;                
+                        return -1;
                 }
 
                 if (pthread_rwlock_unlock(&tmp_ls_rwlock)) {
@@ -174,7 +174,7 @@ ssize_t send_file_chunk(long id)
                 if ((rsize = read(winfo[id].fd, buff, CHUNK_SIZE)) == -1) {
                         snprintf(error_message, ERR_SIZE, "{ERROR} %s Unable to read from selected file", winfo[id].id_string);
                         perr(error_message);
-                        return -1;                
+                        return -1;
                 }
         }
 
