@@ -102,6 +102,13 @@ void sig_handler(__attribute__((unused)) int signo)
         exit_server(EXIT_SUCCESS);
 }
 
+bool is_valid_port(unsigned short int port)
+{
+        bool check_for_std_range = port > 0 && port < 65535;
+        bool check_for_wrk_range = port < START_WORKER_PORT && port > START_WORKER_PORT + concurrenty_connections - 1; 
+
+        return check_for_std_range && check_for_wrk_range; 
+}
 
 bool handle_retransmit(long id) 
 {
@@ -706,13 +713,18 @@ enum app_usages parse_cmd(int argc, char **argv)
                 switch (opt) {
                         case 'p':
                                 acceptance_port = strtol(optarg, NULL, 10);
+                                if (!is_valid_port(acceptance_port))
+                                        return ERROR;
                                 break;
                         case 'N':
-                                if (strtol(optarg, NULL, 10) < MAX_SEQ_NUMBER / 2)
-                                        config->N = strtol(optarg, NULL, 10);
+                                config->N = strtol(optarg, NULL, 10);
+                                if (!(config->N < MAX_SEQ_NUMBER / 2 && config->N > 0))
+                                        return ERROR;
                                 break;
                         case 't':
                                 config->rto_usec = strtol(optarg, NULL, 10);
+                                if (config->rto_usec < 1)
+                                        return ERROR;
                                 break;
                         case 'f':
                                 config->is_adaptive = false;
@@ -721,6 +733,8 @@ enum app_usages parse_cmd(int argc, char **argv)
                                 return (argc != 2) ? ERROR : HELP;
                         case 's':
                                 concurrenty_connections = strtol(optarg, NULL, 10);
+                                if (concurrenty_connections < 1)
+                                        return ERROR;
                                 break;
                         case 'V':
                                 verbose = true;
