@@ -23,9 +23,6 @@
 
 #define MAX_TO_PUT_SEC 10
 
-#define gbn_send(socket, header, payload, payload_length, sockaddr_in) gbn_send_with_prob(socket, header, payload, payload_length, sockaddr_in, config)
-
-
 struct worker_info {
         int socket;                                     /* socket dedicata per la comunicazione */
         char id_string[ID_STR_LENGTH];                  /* stringa identificativa del thread utile nelle stampe di debug */
@@ -698,7 +695,6 @@ enum app_usages parse_cmd(int argc, char **argv)
                 {"wndsize",     required_argument,      0, 'N'},
                 {"rtousec",     required_argument,      0, 't'},
                 {"fixed",       no_argument,            0, 'f'},
-                {"prob",        required_argument,      0, 'P'},
                 {"tpsize",      required_argument,      0, 's'},
                 {"help",        no_argument,            0, 'h'},
                 {"version",     no_argument,            0, 'v'},
@@ -706,7 +702,7 @@ enum app_usages parse_cmd(int argc, char **argv)
                 {0,             0,                      0, 0}
         };
 
-        while ((opt = getopt_long(argc, argv, "p:N:t:fP:s:hvV", long_options, NULL)) != -1) {
+        while ((opt = getopt_long(argc, argv, "p:N:t:fs:hvV", long_options, NULL)) != -1) {
                 switch (opt) {
                         case 'p':
                                 acceptance_port = strtol(optarg, NULL, 10);
@@ -720,9 +716,6 @@ enum app_usages parse_cmd(int argc, char **argv)
                                 break;
                         case 'f':
                                 config->is_adaptive = false;
-                                break;
-                        case 'P':
-                                config->probability = (double) strtol(optarg, NULL, 10) / (double) 100;
                                 break;
                         case 'h':
                                 return (argc != 2) ? ERROR : HELP;
@@ -1297,7 +1290,6 @@ int main(int argc, char **argv)
                                 printf("\nList of current settings for server:\n\n");
                                 printf("N..........: %u\n", config->N);
                                 printf("rcvtimeout.: %lu\n", config->rto_usec);
-                                printf("probability: %.2f\n", config->probability);
                                 printf("port.......: %u\n", acceptance_port);
                                 printf("adapitve...: %s\n\n", (config->is_adaptive) ? "true" : "false");
                         }

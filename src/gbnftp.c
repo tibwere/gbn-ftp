@@ -7,7 +7,7 @@
 #include "common.h"
 
 const struct gbn_config DEFAULT_GBN_CONFIG = {
-        8, 100000, true, 0.01
+        8, 100000, true
 };
 
 void set_sequence_number(gbn_ftp_header_t *header, unsigned int seq_no) 
@@ -127,7 +127,7 @@ static void get_segment(char *message, gbn_ftp_header_t *header, void *payload, 
                 memcpy(payload, (message + header_size), message_size - header_size);
 }
 
-ssize_t gbn_send_with_prob(int socket, gbn_ftp_header_t header, const void *payload, size_t payload_length, const struct sockaddr_in *sockaddr_in, const struct gbn_config *configs)
+ssize_t gbn_send(int socket, gbn_ftp_header_t header, const void *payload, size_t payload_length, const struct sockaddr_in *sockaddr_in)
 {
         ssize_t send_size;
         char *message; 
@@ -136,7 +136,7 @@ ssize_t gbn_send_with_prob(int socket, gbn_ftp_header_t header, const void *payl
         if((message = make_segment(header, payload, payload_length)) == NULL) 
                 return -1;
 
-        if (rand_double() > configs->probability) {
+        if (rand_double() > PROBABILITY) {
                 if (sockaddr_in)
                         send_size = sendto(socket, message, length, MSG_NOSIGNAL, (struct sockaddr *) sockaddr_in, sizeof(struct sockaddr_in));
                 else

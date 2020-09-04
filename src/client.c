@@ -34,7 +34,7 @@
 #define l_request_loop(status_ptr) request_loop(-1, LIST, NULL, status_ptr, NULL)
 #define g_request_loop(writefd, filename, status_ptr, delete_file) request_loop(writefd, GET, filename, status_ptr, delete_file)
 #define p_request_loop(writefd, filename, status_ptr, already_exists) request_loop(writefd, PUT, filename, status_ptr, already_exists)
-#define gbn_send(socket, header, payload, payload_length, sockaddr_in) gbn_send_with_prob(socket, header, payload, payload_length, sockaddr_in, config)
+
 
 struct put_args {
         int fd;                                 /* descrittore del file su cui si deve operare */
