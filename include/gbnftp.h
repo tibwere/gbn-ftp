@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <arpa/inet.h>
+#include <stdint.h>
 
 #define MAX_SEQ_NUMBER 134217727
 
@@ -29,7 +30,7 @@
 #define BETA 0.25
 
 struct gbn_config {
-        unsigned int N;
+        uint32_t N;
         long rto_usec;
         bool is_adaptive;
 };

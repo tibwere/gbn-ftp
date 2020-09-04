@@ -442,7 +442,7 @@ bool request_loop(int writefd, enum message_type type, const char *filename, enu
 
                                 *status_ptr = CONNECTED;
                                 deserialize_configuration(config, config_ser);
-                                printf("%d - %ld - %d\n", config->N, config->rto_usec, config->is_adaptive);
+
                                 #ifdef DEBUG
                                 printf("{DEBUG} [Main Thread] Received NEW PORT message [Config: N %d; rto %ld usec (%s)]\n", 
                                         config->N, config->rto_usec, (config->is_adaptive) ? "adaptive" : "fixed");
