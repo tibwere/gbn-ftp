@@ -409,13 +409,13 @@ bool request_loop(int writefd, enum message_type type, const char *filename, enu
         struct sockaddr_in addr;
         size_t header_size = sizeof(gbn_ftp_header_t);
         fd_set read_fds, std_fds;
-        struct gbn_config recv_config;
+        char config_ser[CHUNK_SIZE];
 
         FD_ZERO(&std_fds);
         FD_SET(sockfd, &std_fds);
 
         memset(&addr, 0x0, sizeof(struct sockaddr_in));
-        memset(&recv_config, 0x0, sizeof(struct gbn_config));
+        memset(config_ser, 0x0, CHUNK_SIZE);
 
         while(*status_ptr == REQUEST) {
 
@@ -433,19 +433,19 @@ bool request_loop(int writefd, enum message_type type, const char *filename, enu
 
                 if (retval) {
 
-                        if ((recv_size = gbn_receive(sockfd, &recv_header, &recv_config, &addr)) == -1) {
+                        if ((recv_size = gbn_receive(sockfd, &recv_header, config_ser, &addr)) == -1) {
                                 perr("{ERROR} [Main Thread] Unable to get NEW_PORT message from server (gbn_receive)");
                                 return false;
                         }
 
-                        if ((get_sequence_number(recv_header) == 0) && !is_ack(recv_header) && (recv_size - header_size == sizeof(struct gbn_config)) && !is_err(recv_header)) {
+                        if ((get_sequence_number(recv_header) == 0) && !is_ack(recv_header) && (recv_size - header_size == CHUNK_SIZE) && !is_err(recv_header)) {
 
                                 *status_ptr = CONNECTED;
-
-                                memcpy(config, &recv_config, sizeof(struct gbn_config));
-
+                                deserialize_configuration(config, config_ser);
+                                printf("%d - %ld - %d\n", config->N, config->rto_usec, config->is_adaptive);
                                 #ifdef DEBUG
-                                printf("{DEBUG} [Main Thread] Received NEW PORT message\n");
+                                printf("{DEBUG} [Main Thread] Received NEW PORT message [Config: N %d; rto %ld usec (%s)]\n", 
+                                        config->N, config->rto_usec, (config->is_adaptive) ? "adaptive" : "fixed");
                                 #endif
 
                                 if (connect(sockfd, (struct sockaddr *) &addr, sizeof(struct sockaddr_in)) == -1) {

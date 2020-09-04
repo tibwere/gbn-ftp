@@ -257,3 +257,18 @@ long get_adaptive_rto_safe(struct gbn_adaptive_timeout *adapt, pthread_mutex_t *
         
         return rto;
 }
+
+void serialize_configuration(const struct gbn_config *config, char *ser)
+{
+        snprintf(ser, CHUNK_SIZE, "%d;%ld;%d", config->N, config->rto_usec, config->is_adaptive);
+        return;
+}
+
+void deserialize_configuration(struct gbn_config *config, char *ser)
+{
+        config->N = strtol(strtok(ser, ";"), NULL, 10);
+        config->rto_usec = strtol(strtok(NULL, ";"), NULL, 10);
+        config->is_adaptive = strtol(strtok(NULL, ";"), NULL, 10);
+
+        return;
+}

@@ -239,19 +239,22 @@ ssize_t lg_send_new_port_mess(long id)
         int ret;
         ssize_t wsize;
         char error_message[ERR_SIZE];
+        char serialized_config[CHUNK_SIZE];
 
         memset(error_message, 0x0, ERR_SIZE);
+        memset(serialized_config, 0x0, CHUNK_SIZE);
 
         set_err(&header, false);
         set_sequence_number(&header, 0);
         set_message_type(&header, winfo[id].modality);
         set_last(&header, false);
         set_ack(&header, false);
-        
+
+        serialize_configuration(config, serialized_config);        
 
         while (get_status_safe(&winfo[id].status, &winfo[id].mutex) == REQUEST) {
 
-                if ((wsize = gbn_send(winfo[id].socket, header, config, sizeof(struct gbn_config), &winfo[id].client_sockaddr)) == -1) {
+                if ((wsize = gbn_send(winfo[id].socket, header, serialized_config, CHUNK_SIZE, &winfo[id].client_sockaddr)) == -1) {
                         snprintf(error_message, ERR_SIZE, "{ERROR} %s Unable to send NEW_PORT message", winfo[id].id_string);
                         perr(error_message);
                         return false;
@@ -302,6 +305,7 @@ ssize_t p_send_new_port_mess(long id)
         fd_set read_fds, all_fds;
         struct timeval tv;
         char error_message[ERR_SIZE];
+        char serialized_config[CHUNK_SIZE];
 
         set_err(&send_header, false);
         set_sequence_number(&send_header, 0);
@@ -313,10 +317,13 @@ ssize_t p_send_new_port_mess(long id)
         FD_SET(winfo[id].socket, &all_fds);
 
         memset(error_message, 0x0, ERR_SIZE);
+        memset(serialized_config, 0x0, CHUNK_SIZE);
+
+        serialize_configuration(config, serialized_config);
 
         while (get_status_safe(&winfo[id].status, &winfo[id].mutex) == REQUEST) {
 
-                if ((wsize = gbn_send(winfo[id].socket, send_header, config, sizeof(struct gbn_config), &winfo[id].client_sockaddr)) == -1) {
+                if ((wsize = gbn_send(winfo[id].socket, send_header, serialized_config, CHUNK_SIZE, &winfo[id].client_sockaddr)) == -1) {
                         snprintf(error_message, ERR_SIZE, "{ERROR} %s Unable to send NEW_PORT message", winfo[id].id_string);
                         perr(error_message);
                         return false;

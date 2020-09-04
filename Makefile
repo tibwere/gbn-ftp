@@ -3,7 +3,7 @@
 
 IDIR = ./include
 CC = gcc
-CFLAGS = -I$(IDIR) -Wall -Wextra# -DDEBUG -ggdb3
+CFLAGS = -I$(IDIR) -Wall -Wextra -DDEBUG -ggdb3
 ODIR = ./obj
 BDIR = ./bin
 SDIR = ./src
