@@ -95,11 +95,6 @@ struct gbn_config *init_configurations(void)
         return cfg;
 }
 
-double rand_double(void)
-{
-        return (double) rand() / (double) RAND_MAX;
-}
-
 long elapsed_usec(const struct timeval *start, const struct timeval *stop)
 {
         unsigned long sec;
@@ -196,7 +191,7 @@ bool setup_signals(sigset_t *thread_mask , void (*sig_handler)(int))
         return true;			
 }
 
-long abs_val(long value) {
+long abs_long(long value) {
         return (value >= 0) ? value : -value;
 }
 

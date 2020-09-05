@@ -132,11 +132,12 @@ ssize_t gbn_send(int socket, gbn_ftp_header_t header, const void *payload, size_
         ssize_t send_size;
         char *message; 
         size_t length = payload_length + sizeof(gbn_ftp_header_t);
+        double rndval = (double) rand() / (double) RAND_MAX;
         
         if((message = make_segment(header, payload, payload_length)) == NULL) 
                 return -1;
 
-        if (rand_double() > PROBABILITY) {
+        if (rndval > PROBABILITY) {
                 if (sockaddr_in)
                         send_size = sendto(socket, message, length, MSG_NOSIGNAL, (struct sockaddr *) sockaddr_in, sizeof(struct sockaddr_in));
                 else

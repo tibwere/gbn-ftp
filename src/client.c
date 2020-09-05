@@ -591,7 +591,7 @@ bool p_connect_loop(void)
                                 gettimeofday(&tv, NULL);
                                 adapt->sampleRTT = elapsed_usec(&adapt->saved_tv, &tv);
                                 adapt->estimatedRTT = ((1 - ALPHA) * adapt->estimatedRTT) + (ALPHA * adapt->sampleRTT);
-                                adapt->devRTT = ((1 - BETA) * adapt->devRTT) + (BETA * abs_val(adapt->sampleRTT - adapt->estimatedRTT));
+                                adapt->devRTT = ((1 - BETA) * adapt->devRTT) + (BETA * abs_long(adapt->sampleRTT - adapt->estimatedRTT));
                                 adapt->seq_num = get_sequence_number(recv_header);
                                 adapt->restart = true;
 
@@ -944,7 +944,7 @@ int main(int argc, char **argv)
                         printf("\n\tList of available options:\n");
                         printf("\t\t-p [--port]\t<port>\t\tserver port\n");
                         printf("\t\t-v [--version]\t\t\tVersion of gbn-ftp-client\n");
-                        printf("\t\t-V [--verbose]\t\t\tPrint verbose version of error\n");
+                        printf("\t\t-V [--verbose]\t\t\tPrint verbose version of error\n\n");
                         exit_client(EXIT_SUCCESS);
                         break;
                 case VERSION: 
