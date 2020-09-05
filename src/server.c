@@ -19,7 +19,8 @@
 
 #define ID_STR_LENGTH 64
 #define CMD_SIZE 128
-#define START_WORKER_PORT 29290
+#define START_WORKER_PORT 49152
+#define MAX_PORT_NUM 65535
 
 #define MAX_TO_PUT_SEC 10
 
@@ -105,7 +106,7 @@ void sig_handler(__attribute__((unused)) int signo)
 
 bool is_valid_port(unsigned short int port)
 {
-        bool check_for_std_range = port > 0 && port < 65535;
+        bool check_for_std_range = port > 0 && port < MAX_PORT_NUM;
         bool check_for_wrk_range = port < START_WORKER_PORT && port > START_WORKER_PORT + concurrenty_connections - 1; 
 
         return check_for_std_range && check_for_wrk_range; 
@@ -775,7 +776,7 @@ enum app_usages parse_cmd(int argc, char **argv)
                                 return (argc != 2) ? ERROR : HELP;
                         case 's':
                                 concurrenty_connections = strtol(optarg, NULL, 10);
-                                if (concurrenty_connections < 1)
+                                if (concurrenty_connections < 1 && concurrenty_connections > MAX_PORT_NUM - START_WORKER_PORT)
                                         return ERROR;
                                 break;
                         case 'V':
