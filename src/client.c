@@ -1003,7 +1003,7 @@ int main(int argc, char **argv)
                 case HELP:
                         printf("\n\tusage: gbn-ftp-client -a [--address] <address> [options]\n");
                         printf("\n\tList of available options:\n");
-                        printf("\t\t-p [--port]\t<port>\t\tserver port\n");
+                        printf("\t\t-p [--port]\t<port>\t\tServer port\n");
                         printf("\t\t-v [--version]\t\t\tVersion of gbn-ftp-client\n");
                         printf("\t\t-V [--verbose]\t\t\tPrint verbose version of error\n\n");
                         exit_client(EXIT_SUCCESS);

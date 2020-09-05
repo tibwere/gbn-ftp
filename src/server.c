@@ -1365,11 +1365,11 @@ int main(int argc, char **argv)
                 case HELP:
                         printf("\n\tusage: gbn-ftp-server [options]\n");
                         printf("\n\tList of available options:\n");
-                        printf("\t\t-p [--port]\t<port>\t\tserver port\n");
+                        printf("\t\t-p [--port]\t<port>\t\tServer port\n");
                         printf("\t\t-N [--wndsize]\t<size>\t\tWindow size (for GBN)\n");
                         printf("\t\t-t [--rtousec]\t<timeout>\tRetransmition timeout [usec] (for GBN)\n");
-                        printf("\t\t-f [--fixed]\t\t\tTimer fixed\n");
                         printf("\t\t-s [--tpsize]\t<size>\t\tMax number of concurrenty connections\n");
+                        printf("\t\t-f [--fixed]\t\t\tTimer fixed\n");
                         printf("\t\t-v [--version]\t\t\tVersion of gbn-ftp-server\n");
                         printf("\t\t-V [--verbose]\t\t\tPrint verbose version of error\n\n");
                         exit_server(EXIT_SUCCESS);
