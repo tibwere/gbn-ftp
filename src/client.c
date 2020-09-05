@@ -43,6 +43,8 @@ struct put_args {
         unsigned int expected_seq_num;          /* variabile expected_seq_num del protocollo gbn associata alla connessione */
         unsigned int last_acked_seq_num;        /* variabile last_acked_seq_num del protocollo gbn associata alla connessione */
         pthread_mutex_t mutex;                  /* mutex utilizzato per la sincronizzazione fra main thread e servente */
+        pthread_mutex_t cond_mutex;
+        pthread_cond_t cond_var;
         enum connection_status status;          /* stato della connessione {FREE, REQUEST, CONNECTED, TIMEOUT, QUIT} */
         struct timeval start_timer;             /* struttura utilizzata per la gestione del timer */
         pthread_t tid;                          /* ID del thread servente */
@@ -190,7 +192,9 @@ bool handle_retransmit(void)
 
 void *put_sender_routine(__attribute__((unused)) void *dummy) 
 {
+        int ret;
         struct timeval tv;
+        struct timespec ts;
         unsigned short timeout_counter = 0;
         unsigned int last_base_for_timeout = get_gbn_param_safe(&args->base, &args->mutex);
 
@@ -208,21 +212,53 @@ void *put_sender_routine(__attribute__((unused)) void *dummy)
                                 if (can_send_more_segment_safe(&args->base, &args->next_seq_num, config->N, &args->mutex)) {
                                         if (send_file_chunk() == -1)
                                                 set_status_safe(&args->status, QUIT, &args->mutex);
-                                }
+  
+                                        if (get_status_safe(&args->status, &args->mutex) != QUIT) {
+                                                gettimeofday(&tv, NULL);
 
-                                if (get_status_safe(&args->status, &args->mutex) != QUIT) {
-                                        gettimeofday(&tv, NULL);
+                                                if (config->is_adaptive) {
+                                                        if (elapsed_usec(&args->start_timer, &tv) >= get_adaptive_rto_safe(adapt, &args->mutex))
+                                                                set_status_safe(&args->status, TIMEOUT, &args->mutex);
+                                                } else {
+                                                        if (elapsed_usec(&args->start_timer, &tv) >= config->rto_usec)
+                                                                set_status_safe(&args->status, TIMEOUT, &args->mutex);
+                                                }
+                                        }                                
+                                } else {
 
-                                        if (config->is_adaptive) {
-                                                if (elapsed_usec(&args->start_timer, &tv) >= get_adaptive_rto_safe(adapt, &args->mutex))
-                                                        set_status_safe(&args->status, TIMEOUT, &args->mutex);
-                                        } else {
-                                                if (elapsed_usec(&args->start_timer, &tv) >= config->rto_usec)
-                                                        set_status_safe(&args->status, TIMEOUT, &args->mutex);
+                                        if (pthread_mutex_lock(&args->cond_mutex)) {
+                                                perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_cond_mutex)");
+                                                return false;
                                         }
+
+                                        while (args->next_seq_num >= args->base + config->N) {
+                                                ts.tv_sec = args->start_timer.tv_sec + floor((double) (config->rto_usec + args->start_timer.tv_usec) / (double) 1000000);
+                                                ts.tv_nsec = ((args->start_timer.tv_usec + config->rto_usec) % 1000000) * 1000;
+                                                
+                                                ret = pthread_cond_timedwait(&args->cond_var, &args->cond_mutex, &ts);
+
+                                                if (ret > 0) {
+                                                        if (ret != ETIMEDOUT) {
+                                                                perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_condvar)");
+                                                                return false;
+                                                        } else {
+                                                                set_status_safe(&args->status, TIMEOUT, &args->mutex);
+                                                                break;
+                                                        }
+
+                                                }
+                                        }
+
+                                        if (pthread_mutex_unlock(&args->cond_mutex)) {
+                                                perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_cond_mutex)");
+                                                return false;
+                                        }
+
                                 }
 
                                 break;
+
+
 
                         case TIMEOUT:
 
@@ -555,6 +591,11 @@ bool p_connect_loop(void)
                 printf("{DEBUG} [Main Thread] ACK no. %d received\n", get_sequence_number(recv_header));
                 #endif
 
+                if (pthread_cond_signal(&args->cond_var)) {
+                        perr("{ERROR} [Main Thread] Syncronization protocol for worker threads broken (worker_condvar)");
+                        return false;
+                }
+
                 if (is_last(recv_header)) {
 
                         if (pthread_sigmask(SIG_BLOCK, &t_set, NULL)) {
@@ -729,6 +770,16 @@ bool init_put_args(void)
                 perr("{ERROR} [Main Thread] Unable to allocate metadata for PUT operation (pthread_mutex_init)");
                 return false;
         }
+
+        if (pthread_mutex_init(&args->cond_mutex, NULL)) {
+                perr("{ERROR} [Main Thread] Unable to allocate metadata for PUT operation (pthread_mutex_init)");
+                return false;
+        }
+
+        if (pthread_cond_init(&args->cond_var, NULL)) {
+                perr("{ERROR} [Main Thread] Unable to allocate metadata for PUT operation (pthread_cond_init)");
+                return false;
+        }
         
         args->fd = -1;
         args->base = 1;
@@ -760,6 +811,16 @@ bool dispose_put_args(void)
 {
         if (args != NULL) {
                 if (pthread_mutex_destroy(&args->mutex)) {
+                        perr("{ERROR} [Main Thread] unable to free metadata used for PUT operation");
+                        return false;
+                }
+
+                if (pthread_mutex_destroy(&args->cond_mutex)) {
+                        perr("{ERROR} [Main Thread] unable to free metadata used for PUT operation");
+                        return false;
+                }
+
+                if (pthread_cond_destroy(&args->cond_var)) {
                         perr("{ERROR} [Main Thread] unable to free metadata used for PUT operation");
                         return false;
                 }

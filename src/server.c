@@ -612,8 +612,7 @@ void *sender_routine(void *args)
                                         }                                
                                 } else {
 
-                                        if ((ret = pthread_mutex_lock(&winfo[id].cond_mutex))) {
-                                                printf("%d\n", ret);
+                                        if (pthread_mutex_lock(&winfo[id].cond_mutex)) {
                                                 snprintf(err_mess, ERR_SIZE, "{ERROR} %s Syncronization protocol for worker threads broken (worker_cond_mutex)", winfo[id].id_string);
                                                 perr(err_mess);
                                                 return false;
@@ -625,17 +624,16 @@ void *sender_routine(void *args)
                                                 
                                                 ret = pthread_cond_timedwait(&winfo[id].cond_var, &winfo[id].cond_mutex, &ts);
 
-                                                if (ret > 0 && ret != ETIMEDOUT) {
-                                                        snprintf(err_mess, ERR_SIZE, "{ERROR} %s Syncronization protocol for worker threads broken (worker_condvar)", winfo[id].id_string);
-                                                        perr(err_mess);
-                                                        return false;
-                                                } else {
-                                                        if (winfo[id].next_seq_num >= winfo[id].base + config->N) {
+                                                if (ret > 0) {
+                                                        if (ret != ETIMEDOUT) {
+                                                                snprintf(err_mess, ERR_SIZE, "{ERROR} %s Syncronization protocol for worker threads broken (worker_condvar)", winfo[id].id_string);
+                                                                perr(err_mess);
+                                                                return false;
+                                                        } else {
                                                                 set_status_safe(&winfo[id].status, TIMEOUT, &winfo[id].mutex);
                                                                 break;
                                                         }
-                                                        else
-                                                                break;
+
                                                 }
                                         }
 
