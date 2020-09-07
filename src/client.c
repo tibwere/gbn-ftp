@@ -31,9 +31,9 @@
         #define cls() 
 #endif
 
-#define l_request_loop(status_ptr) request_loop(-1, LIST, NULL, status_ptr, NULL)
-#define g_request_loop(writefd, filename, status_ptr, delete_file) request_loop(writefd, GET, filename, status_ptr, delete_file)
-#define p_request_loop(writefd, filename, status_ptr, already_exists) request_loop(writefd, PUT, filename, status_ptr, already_exists)
+#define l_request_loop(status_ptr, can_connect) request_loop(-1, LIST, NULL, status_ptr, NULL, can_connect)
+#define g_request_loop(writefd, filename, status_ptr, delete_file, can_connect) request_loop(writefd, GET, filename, status_ptr, delete_file, can_connect)
+#define p_request_loop(writefd, filename, status_ptr, already_exists, can_connect) request_loop(writefd, PUT, filename, status_ptr, already_exists, can_connect)
 
 
 struct put_args {
@@ -76,7 +76,7 @@ enum app_usages parse_cmd(int argc, char **argv, char *address);
 bool set_sockadrr_in(struct sockaddr_in *server_sockaddr, const char *address_string, unsigned short int port);
 ssize_t send_request(enum message_type type, const char *filename, size_t filename_length);
 ssize_t send_ack(enum message_type type, unsigned int seq_num, bool is_last);
-bool request_loop(int writefd, enum message_type type, const char *filename, enum connection_status *status_ptr, bool *error_ret);
+bool request_loop(int writefd, enum message_type type, const char *filename, enum connection_status *status_ptr, bool *error_ret, bool *can_connect);
 bool lg_connect_loop(int writefd, enum message_type type, enum connection_status *status_ptr);
 bool p_connect_loop(void);
 bool list(void);
@@ -436,7 +436,7 @@ ssize_t send_ack(enum message_type type, unsigned int seq_num, bool is_last)
         return wsize;
 }
 
-bool request_loop(int writefd, enum message_type type, const char *filename, enum connection_status *status_ptr, bool *error_ret)
+bool request_loop(int writefd, enum message_type type, const char *filename, enum connection_status *status_ptr, bool *error_ret, bool *can_connect)
 {
         struct timeval tv;
         int retval;
@@ -457,7 +457,7 @@ bool request_loop(int writefd, enum message_type type, const char *filename, enu
         while(*status_ptr == REQUEST) {
 
                 if (i >= 10) {
-                        printf("Server is busy try again later ...\n");
+                        *can_connect = false;
                         return false;
                 }
 
@@ -621,11 +621,6 @@ bool p_connect_loop(void)
                 printf("{DEBUG} [Main Thread] ACK no. %d received\n", get_sequence_number(recv_header));
                 #endif
 
-                if (pthread_cond_signal(&args->cond_var)) {
-                        perr("{ERROR} [Main Thread] Syncronization protocol for worker threads broken (worker_condvar)");
-                        return false;
-                }
-
                 if (is_last(recv_header)) {
 
                         if (pthread_sigmask(SIG_BLOCK, &t_set, NULL)) {
@@ -688,6 +683,11 @@ bool p_connect_loop(void)
                         perr("{ERROR} [Main Thread] Block of signals before critical section failed");
                         return false;                                
                 }
+
+                if (pthread_cond_signal(&args->cond_var)) {
+                        perr("{ERROR} [Main Thread] Syncronization protocol for worker threads broken (worker_condvar)");
+                        return false;
+                }
         }
 
         return true;
@@ -696,14 +696,23 @@ bool p_connect_loop(void)
 bool list(void) 
 {
         enum connection_status status = REQUEST;
+        bool can_connect;
 
         if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
                 perr("{ERROR} [Main Thread] Unable to get socket file descriptor (REQUEST)");
                 return false;
         }
 
-        if (!l_request_loop(&status))
+        can_connect = true;
+        if (!l_request_loop(&status, &can_connect)) {
+                if (!can_connect) {
+                        printf("\nServer is busy...\nPlease press enter key to get back to menu and try again later\n");
+                        getchar();
+                        return true;
+                } 
+
                 return false;
+        }
 
         cls();
         printf("AVAILABLE FILE ON SERVER\n\n");
@@ -733,6 +742,7 @@ bool get_file(void)
         char filename[CHUNK_SIZE];
         char path[PATH_SIZE];
         bool delete_file = false;
+        bool can_connect;
 
         status = REQUEST;
 
@@ -756,15 +766,22 @@ bool get_file(void)
                 return false;
         }
 
-        if (!g_request_loop(fd, filename, &status, &delete_file)) {
+        can_connect = true;
+        if (!g_request_loop(fd, filename, &status, &delete_file, &can_connect)) {
+                if (!can_connect) {
+                        printf("\nServer is busy...\nPlease press enter key to get back to menu and try again later\n");
+                        getchar();
+                        return true;
+                }
+
                 if (delete_file) {
                         printf("Selected file does not exists on server\nPress enter to get back to menu ");
                         getchar();
                         remove(path);
                         return true;
-                } else {
-                        return false;
-                }
+                } 
+
+                return false;
         }
 
         printf("Wait for download ...\n");
@@ -875,6 +892,7 @@ bool put_file(void)
         char path[PATH_SIZE];
         char choice;
         bool already_exists = false;
+        bool can_connect;
 
         if (!init_put_args())
                 return false;
@@ -916,14 +934,21 @@ bool put_file(void)
                 return false;
         }
 
-        if (!p_request_loop(args->fd, (filename_size) ? filename : basename(path), &args->status, &already_exists)) {
+        can_connect = true;
+        if (!p_request_loop(args->fd, (filename_size) ? filename : basename(path), &args->status, &already_exists, &can_connect)) {
+                if (!can_connect) {
+                        printf("\nServer is busy...\nPlease press enter key to get back to menu and try again later\n");
+                        getchar();
+                        return true;
+                }
+
                 if (already_exists) {
                         printf("Selected file already exists on server\nPress enter to get back to menu ");
                         getchar();
                         return true;
-                } else {
-                        return false;
-                }                
+                }
+
+                return false;                
         }
 
         if (pthread_create(&args->tid, NULL, put_sender_routine, args)) {
@@ -937,7 +962,7 @@ bool put_file(void)
         if (pthread_sigmask(SIG_BLOCK, &t_set, NULL))
                 return false;
 
-        printf("File succesfully uploaded\nPress enter to get back to menu\n");
+        printf("\nFile succesfully uploaded\nPress enter to get back to menu\n");
         getchar();
 
         pthread_join(args->tid, NULL);

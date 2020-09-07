@@ -1063,12 +1063,6 @@ bool handle_recv(int id)
         printf("{DEBUG} %s ACK no. %d received\n", winfo[id].id_string, get_sequence_number(recv_header));
         #endif
 
-        if (pthread_cond_signal(&winfo[id].cond_var)) {
-                snprintf(error_message, ERR_SIZE, "{ERROR} [Main Thread] Syncronization protocol for worker threads broken (worker_condvar_%d)", id);
-                perr(error_message);
-                return false;
-        }
-
         if (get_sequence_number(recv_header) == 0) {
                 set_status_safe(&winfo[id].status, CONNECTED, &winfo[id].mutex);
                 return true;
@@ -1139,6 +1133,12 @@ bool handle_recv(int id)
         if (pthread_sigmask(SIG_UNBLOCK, &t_set, NULL)) {
                 perr("{ERROR} [Main Thread] Block of signals before critical section failed");
                 return false;                                
+        }
+
+        if (pthread_cond_signal(&winfo[id].cond_var)) {
+                snprintf(error_message, ERR_SIZE, "{ERROR} [Main Thread] Syncronization protocol for worker threads broken (worker_condvar_%d)", id);
+                perr(error_message);
+                return false;
         }
 
         return true;
