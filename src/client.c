@@ -530,52 +530,71 @@ bool lg_connect_loop(int writefd, enum message_type type, enum connection_status
         char payload[CHUNK_SIZE];
         ssize_t recv_size;
         size_t header_size = sizeof(gbn_ftp_header_t);
+        fd_set read_fds, std_fds;
+        struct timeval tv;
+        int retval;
 
         expected_seq_num = 1;
         last_acked_seq_num = 0;
 
+        FD_ZERO(&std_fds);
+        FD_SET(sockfd, &std_fds);
+
         while (*status_ptr == CONNECTED) {
                 memset(payload, 0x0, CHUNK_SIZE);
 
-                if((recv_size = gbn_receive(sockfd, &recv_header, payload, NULL)) == -1) {
-                        perr("{ERROR} [Main Thread] Unable to receive pkt from server (gbn_receive)");
-                        return false;
+                read_fds = std_fds;
+                tv.tv_sec = MAX_TO_SEC;
+
+                if ((retval = select(sockfd + 1, &read_fds, NULL, NULL, &tv)) == -1) {
+                        perr("{ERROR} [Main Thread] Unable to receive pkt from server (select)");
+                        return false;        
                 }
 
-                #ifdef DEBUG
-                printf("{DEBUG} [Main Thread] Received chunk no. %d (DIM. %ld)\n", get_sequence_number(recv_header), recv_size - header_size);
-                #endif
-
-                if(get_sequence_number(recv_header) == expected_seq_num) {
-
-                        last_acked_seq_num = expected_seq_num;
-
-                        if (write(writefd, payload, recv_size - header_size) == -1) {
-                                perr("{ERROR} [Main Thread] Unable to print out info received from server");
-                                return false;  
+                if (retval) {
+                        if((recv_size = gbn_receive(sockfd, &recv_header, payload, NULL)) == -1) {
+                                perr("{ERROR} [Main Thread] Unable to receive pkt from server (gbn_receive)");
+                                return false;
                         }
 
-                        if (send_ack(type, expected_seq_num++, is_last(recv_header)) == -1)
-                                return false;
+                        #ifdef DEBUG
+                        printf("{DEBUG} [Main Thread] Received chunk no. %d (DIM. %ld)\n", get_sequence_number(recv_header), recv_size - header_size);
+                        #endif
 
-                        if (is_last(recv_header)) {
-                                *status_ptr = QUIT;
-                        
-                                // Al termine invio 4 ACK per aumentare la probabilità di ricezione da parte del server
-                                for (int i = 0; i < LAST_MESSAGE_LOOP - 1; ++i) {
-                                        if (send_ack(type, last_acked_seq_num, true) == -1) {
-                                                if (errno == ECONNREFUSED)
-                                                        break;
-                                                else
-                                                        return false;
+                        if(get_sequence_number(recv_header) == expected_seq_num) {
+
+                                last_acked_seq_num = expected_seq_num;
+
+                                if (write(writefd, payload, recv_size - header_size) == -1) {
+                                        perr("{ERROR} [Main Thread] Unable to print out info received from server");
+                                        return false;  
+                                }
+
+                                if (send_ack(type, expected_seq_num++, is_last(recv_header)) == -1)
+                                        return false;
+
+                                if (is_last(recv_header)) {
+                                        *status_ptr = QUIT;
+                                
+                                        // Al termine invio 4 ACK per aumentare la probabilità di ricezione da parte del server
+                                        for (int i = 0; i < LAST_MESSAGE_LOOP - 1; ++i) {
+                                                if (send_ack(type, last_acked_seq_num, true) == -1) {
+                                                        if (errno == ECONNREFUSED)
+                                                                break;
+                                                        else
+                                                                return false;
+                                                }
                                         }
                                 }
-                        }
 
+                        } else {
+                                if (send_ack(type, last_acked_seq_num, false) == -1)
+                                        return false;
+                        } 
                 } else {
-                        if (send_ack(type, last_acked_seq_num, false) == -1)
-                                return false;
-                } 
+                        printf("Unable to connect to server, please retry again\n");
+                        return false;
+                }
         }
 
         return true;

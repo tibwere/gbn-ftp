@@ -22,7 +22,6 @@
 #define START_WORKER_PORT 49152
 #define MAX_PORT_NUM 65535
 
-#define MAX_TO_PUT_SEC 10
 
 struct worker_info {
         int socket;                                     /* socket dedicata per la comunicazione */
@@ -445,7 +444,7 @@ bool handle_ack_messages(long id)
         while (get_status_safe(&winfo[id].status, &winfo[id].mutex) == CONNECTED) {
 
                 read_fds = all_fds;
-                tv.tv_sec = MAX_TO_PUT_SEC;
+                tv.tv_sec = MAX_TO_SEC;
                 tv.tv_usec =  0;
                 
                 if ((retval = select(winfo[id].socket + 1, &read_fds, NULL, NULL, &tv)) == -1) {
@@ -595,7 +594,6 @@ void *sender_routine(void *args)
                                 break;
 
                         case CONNECTED:
-
                                 if (can_send_more_segment_safe(&winfo[id].base, &winfo[id].next_seq_num, config->N, &winfo[id].mutex)) {
                                         if (send_file_chunk(id) == -1)
                                                 set_status_safe(&winfo[id].status, QUIT, &winfo[id].mutex);

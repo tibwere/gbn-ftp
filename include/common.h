@@ -6,6 +6,8 @@
 #define MAX_TO 4
 #define LAST_MESSAGE_LOOP 4
 #define PROBABILITY 0.01
+#define MAX_TO_SEC 10
+
 
 #define perr(mess) detailed_perror(mess, __FILE__, __LINE__)
 
