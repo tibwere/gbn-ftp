@@ -605,7 +605,7 @@ bool p_connect_loop(void)
         gbn_ftp_header_t recv_header;
         struct timeval tv;
 
-        while (args->status == CONNECTED) {
+        while (args->status != QUIT) {
 
                 if (gbn_receive(sockfd, &recv_header, NULL, NULL) == -1) {
                         perr("{ERROR} [Main Thread] Unable to get ACK message from server");

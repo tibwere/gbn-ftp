@@ -444,7 +444,7 @@ bool update_tmp_ls_file(int id)
 }
 
 bool handle_ack_messages(long id)
-{
+{       
         char payload[CHUNK_SIZE];
         char error_message[ERR_SIZE];
         fd_set read_fds, all_fds;
@@ -496,7 +496,6 @@ bool handle_ack_messages(long id)
                                         return false;
 
                                 if (is_last(recv_header)) {
-
                                         for (int i = 0; i < LAST_MESSAGE_LOOP - 1; ++i)                                
                                                 if (p_send_ack(id, winfo[id].last_acked_seq_num, true) == -1)
                                                         return false;
@@ -543,10 +542,14 @@ void *receiver_routine(void *args)
 {
         long id = (long) args;
         char err_mess[ERR_SIZE];
+        char path[PATH_SIZE];
 
         set_id_string(id);
 
         memset(err_mess, 0x0, ERR_SIZE);
+        memset(path, 0x0, PATH_SIZE);
+
+        snprintf(path, PATH_SIZE, "/home/%s/.gbn-ftp-public/%s", getenv("USER"), winfo[id].filename);
 
         if (pthread_sigmask(SIG_BLOCK, &t_set, NULL)) {
                 snprintf(err_mess, ERR_SIZE, "{ERROR} %s Unable to set sigmask for worker thread", winfo[id].id_string);
@@ -574,7 +577,7 @@ void *receiver_routine(void *args)
                                 #ifdef DEBUG
                                 printf("{DEBUG} %s Maximum wait time expires. Connection aborted!\n", winfo[id].id_string);
                                 #endif
-                                
+                                remove(path);
                                 set_status_safe(&winfo[id].status, QUIT, &winfo[id].mutex);
                                 break;
 
@@ -764,9 +767,10 @@ void exit_server(int status)
         if (winfo)
                 free(winfo);
 
-        if (config->is_adaptive)
-                if (adapt)
-                        free(adapt);
+        if (config)
+                if (config->is_adaptive)
+                        if (adapt)
+                                free(adapt);
 
         if (config)
                 free(config);
@@ -962,7 +966,7 @@ bool start_receiver(long index, struct sockaddr_in *client_sockaddr, const char 
         strncpy(winfo[index].filename, payload, CHUNK_SIZE);
 
         snprintf(path, PATH_SIZE, "/home/%s/.gbn-ftp-public/%s", getenv("USER"), winfo[index].filename);
-    
+
         if ((winfo[index].fd = open(path, O_CREAT | O_EXCL | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) == -1) {
                 if (errno == EEXIST) {
                         *can_open_ptr = false;
