@@ -703,17 +703,16 @@ void exit_server(int status)
                 }
 
                 for (int i = 0; i < concurrenty_connections; ++i) {
-                        if (get_status_safe(&winfo[i].status, &winfo[i].mutex) != FREE) {
-                                
+                        if (get_status_safe(&winfo[i].status, &winfo[i].mutex) != FREE) {                               
                                 if (winfo[i].tid)
                                         pthread_join(winfo[i].tid, NULL);
-
-                                reset_worker_info(i, true, false);
-
-                                #ifdef DEBUG
-                                printf("{DEBUG} [Main thread] Disposed resources used by %d-th worker that's terminated\n", i);
-                                #endif
                         }
+
+                        reset_worker_info(i, true, false);
+
+                        #ifdef DEBUG
+                        printf("{DEBUG} [Main thread] Disposed resources used by %d-th worker that's terminated\n", i);
+                        #endif
                 }
         }
 
@@ -949,6 +948,7 @@ bool reset_worker_info(int id, bool need_destroy, bool need_create)
         memset(error_message, 0x0, ERR_SIZE);
 
         if (need_destroy) {
+
                 if (pthread_mutex_destroy(&winfo[id].mutex)) {
                         snprintf(error_message, ERR_SIZE, "{ERROR} [Main Thread] Unable to free metadata used by syncronization protocol for %d-th connection (worker_mutex)", id);
                         perr(error_message);
