@@ -446,6 +446,7 @@ bool request_loop(int writefd, enum message_type type, const char *filename, enu
         size_t header_size = sizeof(gbn_ftp_header_t);
         fd_set read_fds, std_fds;
         char config_ser[CHUNK_SIZE];
+        int i = 1;
 
         FD_ZERO(&std_fds);
         FD_SET(sockfd, &std_fds);
@@ -455,12 +456,22 @@ bool request_loop(int writefd, enum message_type type, const char *filename, enu
 
         while(*status_ptr == REQUEST) {
 
+                if (i >= 10) {
+                        printf("Server is busy try again later ...\n");
+                        return false;
+                }
+
+                #ifdef DEBUG
+                printf("{DEBUG} [Main Thread] Connecting to server (try no. %d)\n", i);
+                #endif
+
                 if (send_request(type, filename, (filename) ? strlen(filename) : 0) == -1) 
                         return false; 
 
                 read_fds = std_fds;
-                tv.tv_sec = floor((double) config->rto_usec / (double) 1000000);
-                tv.tv_usec = config->rto_usec % 1000000;
+                tv.tv_sec = floor(i * (double) config->rto_usec / (double) 1000000);
+                tv.tv_usec = (i * config->rto_usec) % 1000000;
+                ++i;
 
                 if ((retval = select(sockfd + 1, &read_fds, NULL, NULL, &tv)) == -1) {
                         perr("{ERROR} [Main Thread] Unable to get NEW_PORT message from server (select)");
