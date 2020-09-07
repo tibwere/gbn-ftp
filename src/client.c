@@ -592,7 +592,7 @@ bool lg_connect_loop(int writefd, enum message_type type, enum connection_status
                                         return false;
                         } 
                 } else {
-                        printf("Unable to connect to server, please retry again\n");
+                        printf("Unable to contact anymore the server, please try again later\n");
                         return false;
                 }
         }

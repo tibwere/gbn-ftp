@@ -41,6 +41,14 @@ struct worker_info {
         struct timeval start_timer;                     /* struttura utilizzata per la gestione del timer */
         pthread_t tid;                                  /* ID del thread servent e*/
         int fd;                                         /* descrittore del file su cui si deve operare */ 
+       
+        #ifdef TEST
+        struct timeval first_ack;
+        struct timeval full_window;
+        struct timeval start_tx;
+        struct timeval end_tx;
+        long last_rtt;
+        #endif
 };
 
 
@@ -191,6 +199,11 @@ ssize_t send_file_chunk(long id)
                 set_err(&header, false);  
                 set_last(&header, (rsize < CHUNK_SIZE));  
 
+                #ifdef TEST
+                if (winfo[id].next_seq_num == 1)
+                        gettimeofday(&winfo[id].start_tx, NULL);
+                #endif
+
                 if ((wsize = gbn_send(winfo[id].socket, header, buff, rsize, &winfo[id].client_sockaddr)) == -1) {
                         snprintf(error_message, ERR_SIZE, "{ERROR} %s Unable to send chunk to client", winfo[id].id_string);
                         perr(error_message);
@@ -223,6 +236,11 @@ ssize_t send_file_chunk(long id)
                         perr(error_message);
                         return -1;
                 }
+
+                #ifdef TEST
+                if (winfo[id].next_seq_num == config->N)
+                        gettimeofday(&winfo[id].full_window, NULL);
+                #endif
 
                 winfo[id].next_seq_num ++;
 
@@ -502,16 +520,31 @@ bool handle_ack_messages(long id)
         return true;
 }
 
+void set_id_string(long id)
+{
+        char modality_str[5];
+
+        memset(modality_str, 0x0, 5);
+
+        switch(winfo[id].modality) {
+                case LIST: snprintf(modality_str, 5, "LIST"); break;
+                case PUT: snprintf(modality_str, 5, "PUT"); break;
+                case GET: snprintf(modality_str, 5, "GET"); break;
+                default: snprintf(modality_str, 5, "ZERO"); break;
+        }
+        snprintf(winfo[id].id_string, ID_STR_LENGTH, "[Worker no. %ld - Client connected: %s:%d (OP: %s)]", 
+        id, 
+        inet_ntoa((winfo[id].client_sockaddr).sin_addr), 
+        ntohs((winfo[id].client_sockaddr).sin_port),
+        modality_str);
+}
+
 void *receiver_routine(void *args) 
 {
         long id = (long) args;
         char err_mess[ERR_SIZE];
 
-        snprintf(winfo[id].id_string, ID_STR_LENGTH, "[Worker no. %ld - Client connected: %s:%d (OP: %d)]", 
-                id, 
-                inet_ntoa((winfo[id].client_sockaddr).sin_addr), 
-                ntohs((winfo[id].client_sockaddr).sin_port),
-                winfo[id].modality);
+        set_id_string(id);
 
         memset(err_mess, 0x0, ERR_SIZE);
 
@@ -576,12 +609,7 @@ void *sender_routine(void *args)
         }
 
         memset(err_mess, 0x0, ERR_SIZE);
-
-        snprintf(winfo[id].id_string, ID_STR_LENGTH, "[Worker no. %ld - Client connected: %s:%d (OP: %d)]", 
-                id, 
-                inet_ntoa((winfo[id].client_sockaddr).sin_addr), 
-                ntohs((winfo[id].client_sockaddr).sin_port),
-                winfo[id].modality);
+        set_id_string(id);
 
         while (get_status_safe(&winfo[id].status, &winfo[id].mutex) != QUIT) {
 
@@ -687,6 +715,25 @@ void *sender_routine(void *args)
 
         #ifdef DEBUG
         printf("{DEBUG} %s is quitting right now\n", winfo[id].id_string);
+        #endif
+
+        #ifdef TEST
+        printf("{TEST} %s FIRST ESTIMATED RTT = %ld usec\n", 
+                winfo[id].id_string, 
+                elapsed_usec(&winfo[id].start_tx, &winfo[id].first_ack));
+
+        printf("{TEST} %s TIME TO SEND A FULL WINDOW (N = %d) = %ld usec\n",
+                winfo[id].id_string,
+                config->N, 
+                elapsed_usec(&winfo[id].start_tx, &winfo[id].full_window));
+
+        printf("{TEST} %s LAST ADAPTIVE RTO EVALUATED = %ld usec\n",
+                winfo[id].id_string,
+                winfo[id].last_rtt);
+
+        printf("{TEST} %s SEND TIME %ld usec\n", 
+                winfo[id].id_string,
+                elapsed_usec(&winfo[id].start_tx, &winfo[id].end_tx));
         #endif
 
         pthread_exit(NULL);
@@ -1063,12 +1110,22 @@ bool handle_recv(int id)
         printf("{DEBUG} %s ACK no. %d received\n", winfo[id].id_string, get_sequence_number(recv_header));
         #endif
 
+        #ifdef TEST
+        if (get_sequence_number(recv_header) == 1)
+                gettimeofday(&winfo[id].first_ack, NULL);
+        #endif
+
         if (get_sequence_number(recv_header) == 0) {
                 set_status_safe(&winfo[id].status, CONNECTED, &winfo[id].mutex);
                 return true;
         }
 
         if (is_last(recv_header)) {
+
+                #ifdef TEST
+                gettimeofday(&winfo[id].end_tx, NULL);
+                winfo[id].last_rtt = adapt[id].estimatedRTT + (4 * adapt[id].devRTT);
+                #endif 
 
                 if (pthread_sigmask(SIG_BLOCK, &t_set, NULL)) {
                         perr("{ERROR} [Main Thread] Block of signals before critical section failed");
@@ -1355,9 +1412,11 @@ int main(int argc, char **argv)
                         if ((choice = multi_choice("Do you want to see current settings profile?", "yn", 2)) == 'Y') {
                                 printf("\nList of current settings for server:\n\n");
                                 printf("N..........: %u\n", config->N);
-                                printf("rcvtimeout.: %lu\n", config->rto_usec);
+                                printf("rcvtimeout.: %lu usec\n", config->rto_usec);
                                 printf("port.......: %u\n", acceptance_port);
-                                printf("adapitve...: %s\n\n", (config->is_adaptive) ? "true" : "false");
+                                printf("adapitve...: %s\n", (config->is_adaptive) ? "true" : "false");
+                                printf("probability: %.2f\n", PROBABILITY);
+                                printf("pool size..: %ld\n\n", concurrenty_connections);
                         }
  
                         break;
@@ -1392,7 +1451,7 @@ int main(int argc, char **argv)
         if ((acceptance_sockfd = init_socket(acceptance_port)) == -1) 
                 exit_server(EXIT_FAILURE);
 
-        printf("\nServer is now listening ... ");
+        printf("\nServer is now listening ... \n");
         fflush(stdout);
 
         if (!acceptance_loop(acceptance_sockfd))
