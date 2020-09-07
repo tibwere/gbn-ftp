@@ -194,7 +194,7 @@ ssize_t send_file_chunk(long id)
         if (rsize > 0) {
 
                 set_message_type(&header, winfo[id].modality);
-                set_sequence_number(&header, winfo[id].next_seq_num);
+                set_sequence_number(&header, get_gbn_param_safe(&winfo[id].next_seq_num, &winfo[id].mutex));
                 set_ack(&header, false);      
                 set_err(&header, false);  
                 set_last(&header, (rsize < CHUNK_SIZE));  
@@ -220,7 +220,7 @@ ssize_t send_file_chunk(long id)
                         return -1;
                 }  
 
-                if (config->is_adaptive) {
+                if (config->is_adaptive && winfo[id].status == CONNECTED) {
                         if (adapt[id].restart) {
                                 gettimeofday(&adapt[id].saved_tv, NULL);
                                 adapt[id].seq_num = winfo[id].next_seq_num;
@@ -231,18 +231,18 @@ ssize_t send_file_chunk(long id)
                 if (winfo[id].base == winfo[id].next_seq_num) 
                         gettimeofday(&winfo[id].start_timer, NULL);
 
-                if (pthread_mutex_unlock(&winfo[id].mutex)) {
-                        snprintf(error_message, ERR_SIZE, "{ERROR} %s Syncronization protocol for worker threads broken (worker_mutex)", winfo[id].id_string);
-                        perr(error_message);
-                        return -1;
-                }
-
                 #ifdef TEST
                 if (winfo[id].next_seq_num == config->N)
                         gettimeofday(&winfo[id].full_window, NULL);
                 #endif
 
-                winfo[id].next_seq_num ++;
+                winfo[id].next_seq_num ++;                
+                
+                if (pthread_mutex_unlock(&winfo[id].mutex)) {
+                        snprintf(error_message, ERR_SIZE, "{ERROR} %s Syncronization protocol for worker threads broken (worker_mutex)", winfo[id].id_string);
+                        perr(error_message);
+                        return -1;
+                }
 
                 return wsize; 
         }  
@@ -1163,13 +1163,12 @@ bool handle_recv(int id)
                 return false;
         }
 
-        if (config->is_adaptive) {
+        if (config->is_adaptive && winfo[id].status == CONNECTED) {
                 if (adapt[id].seq_num <= get_sequence_number(recv_header)) {
                         gettimeofday(&tv, NULL);
                         adapt[id].sampleRTT = elapsed_usec(&adapt[id].saved_tv, &tv);
                         adapt[id].estimatedRTT = ((1 - ALPHA) * adapt[id].estimatedRTT) + (ALPHA * adapt[id].sampleRTT);
                         adapt[id].devRTT = ((1 - BETA) * adapt[id].devRTT) + (BETA * abs_long(adapt[id].sampleRTT - adapt[id].estimatedRTT));
-                        adapt[id].seq_num = get_sequence_number(recv_header);
                         adapt[id].restart = true;
 
                         #ifdef DEBUG
