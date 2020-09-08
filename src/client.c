@@ -1,3 +1,10 @@
+/*
+ * File..: client.c
+ * Autore: Simone Tiberi M.0252795
+ *
+ */
+
+/* LIBRERIE STANDARD */               
 #include <stdio.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -18,12 +25,16 @@
 #include <signal.h>
 #include <errno.h>
 
+
+/* LIBRERIE CUSTOM */
 #include "gbnftp.h" 
 #include "common.h"
 
 
+/* MACRO DI PRECOMPILAZIONE */
 #define ADDRESS_STRING_LENGTH 1024
 #define HEADER_FILE_LENGTH 241
+#define MAX_CONNECTION_ATTEMPT 10
 
 #ifndef DEBUG
         #define cls() printf("\033[2J\033[H")
@@ -36,27 +47,30 @@
 #define p_request_loop(writefd, filename, status_ptr, already_exists, can_connect) request_loop(writefd, PUT, filename, status_ptr, already_exists, can_connect)
 
 
+/* STRUTTURE DATI */
 struct put_args {
-        int fd;                                 /* descrittore del file su cui si deve operare */
-        unsigned int base;                      /* variabile base del protocollo gbn associata alla connessione */
-        unsigned int next_seq_num;              /* variabile next_seq_num del protocollo gbn associata alla connessione */
-        unsigned int expected_seq_num;          /* variabile expected_seq_num del protocollo gbn associata alla connessione */
-        unsigned int last_acked_seq_num;        /* variabile last_acked_seq_num del protocollo gbn associata alla connessione */
-        pthread_mutex_t mutex;                  /* mutex utilizzato per la sincronizzazione fra main thread e servente */
-        pthread_mutex_t cond_mutex;
-        pthread_cond_t cond_var;
-        enum connection_status status;          /* stato della connessione {FREE, REQUEST, CONNECTED, TIMEOUT, QUIT} */
-        struct timeval start_timer;             /* struttura utilizzata per la gestione del timer */
+        int fd;                                 /* Descrittore del file su cui si deve operare */
+        unsigned int base;                      /* Variabile base del protocollo gbn associata alla connessione */
+        unsigned int next_seq_num;              /* Variabile next_seq_num del protocollo gbn associata alla connessione */
+        unsigned int expected_seq_num;          /* Variabile expected_seq_num del protocollo gbn associata alla connessione */
+        unsigned int last_acked_seq_num;        /* Variabile last_acked_seq_num del protocollo gbn associata alla connessione */
+        pthread_mutex_t mutex;                  /* Mutex utilizzato per la sincronizzazione fra main thread e servente */
+        pthread_mutex_t cond_mutex;             /* Mutex utilizzato come guardia per la variabile condizionale */
+        pthread_cond_t cond_var;                /* Variabile condizionale utilizzata in un timed_wait nella fase di connessione */
+        enum connection_status status;          /* Stato della connessione {FREE, REQUEST, CONNECTED, TIMEOUT, QUIT} */
+        struct timeval start_timer;             /* Struttura utilizzata per la gestione del timer */
         pthread_t tid;                          /* ID del thread servente */
         long number_of_chunks;
 };
 
 
+/* VARIABILI ESTERNE */
 extern bool verbose;
 extern char *optarg;
 extern int opterr;
 
 
+/* VARIABILI GLOBALI */
 int sockfd;
 struct gbn_config *config;
 struct sockaddr_in request_sockaddr;
@@ -68,6 +82,7 @@ char header[HEADER_FILE_LENGTH];
 enum app_usages modality;
 
 
+/* PROTOTIPI */
 void sig_handler(int signo); 
 ssize_t send_file_chunk(void);
 bool handle_retransmit(void);
@@ -88,6 +103,15 @@ bool put_file(void);
 bool check_installation(void);
 bool load_header();
 
+                                      
+/*
+ * funzione:	sig_handler
+ * --------------------
+ * descrizione:	Gestore dei segnali dell'applicazione client.
+ *
+ * parametri:	signo (int):    Numero del segnale catturato
+ *
+ */
 #ifdef DEBUG
 void sig_handler(int signo) 
 #else
@@ -101,6 +125,16 @@ void sig_handler(__attribute__((unused)) int signo)
         exit_client(EXIT_SUCCESS);
 }
 
+/*
+ * funzione:	send_file_chunk
+ * --------------------
+ * descrizione:	Funzione responsabile dell'invio di un chunk del file
+ *              n.b.    Implementa la funzionalità rdt_send(data) dell'automa sender GBN
+ *                      nel caso in cui sono disponibili ancora numeri di sequenza utilizzabili.
+ *
+ * return:	Numero di byte inviati (ssize_t)
+ *
+ */
 ssize_t send_file_chunk(void)
 {
         gbn_ftp_header_t header;
@@ -161,6 +195,16 @@ ssize_t send_file_chunk(void)
         return 0;    
 }
 
+/*
+ * funzione:	handle_retransmit
+ * --------------------
+ * descrizione:	Funzione responsabile dell'invio dell'intera finestra a seguito della scadenza di un timeout
+ *              n.b.    Implementa la funzionalità timeout dell'automa sender GBN
+ *
+ * return:	true    nel caso in cui non vi sono errori
+ *              false   altrimenti       
+ *
+ */
 bool handle_retransmit(void) 
 {
         unsigned int base; 
@@ -196,6 +240,16 @@ bool handle_retransmit(void)
         return true;
 }
 
+/*
+ * funzione:	put_sender_routine
+ * --------------------
+ * descrizione:	Entry point del thread spawnato per l'invio dei chunk al server in caso di operazione PUT
+ *
+ * parametri:   dummy (void *): Valore non utilizzato (NULL)
+ *
+ * return:      Valore d'uscita del thread (NULL)	    
+ *
+ */
 void *put_sender_routine(__attribute__((unused)) void *dummy) 
 {
         int ret;
@@ -320,6 +374,14 @@ void *put_sender_routine(__attribute__((unused)) void *dummy)
         pthread_exit(NULL);
 }
 
+/*
+ * funzione:	exit_client
+ * --------------------
+ * descrizione:	Funzione responsabile della fase di chiusura del client
+ *
+ * parametri:   status (int):   Valore d'uscita del processo 
+ *
+ */
 void exit_client(int status) 
 {
         dispose_put_args();
@@ -342,6 +404,18 @@ void exit_client(int status)
         exit(status);
 }
 
+/*
+ * funzione:	parse_cmd
+ * --------------------
+ * descrizione:	Funzione responsabile del parsing della command line
+ *
+ * parametri:   argc (int):             Numero di parametri immessi da linea di comando 
+ *              argv (char **):         Vettore delle stringhe immesse da linea di comando 
+ *              address (char *):       Stringa che rappresenta l'indirizzo a cui ci si vuole connettere
+ *
+ * return:      Modalita' d'utilizzo dell'applicazione sceltaa (enum app_usages)    
+ *
+ */
 enum app_usages parse_cmd(int argc, char **argv, char *address)
 {
         int opt;
@@ -382,6 +456,19 @@ enum app_usages parse_cmd(int argc, char **argv, char *address)
         return (valid_cmd) ? STANDARD : ERROR;
 }
 
+/*
+ * funzione:	set_sockadrr_in
+ * --------------------
+ * descrizione:	Funzione responsabile dell'impostazione dei parametri della struttura sockaddr_in
+ *
+ * parametri:   server_sockaddr (struct sockaddr_in *): Puntatore alla struttra sockaddr_in da impostare        
+ *              address_string (const char *):          Stringa rappresentante l'indirizzo da inserire 
+ *              port (unsigned short int):              Numero di porta da impostare       
+ *
+ * return:	true    nel caso in cui non vi sono errori
+ *              false   altrimenti    
+ *
+ */
 bool set_sockadrr_in(struct sockaddr_in *server_sockaddr, const char *address_string, unsigned short int port)
 {
         memset(server_sockaddr, 0x0, sizeof(struct sockaddr_in));
@@ -396,6 +483,18 @@ bool set_sockadrr_in(struct sockaddr_in *server_sockaddr, const char *address_st
         return true;
 }
 
+/*
+ * funzione:	send_request
+ * --------------------
+ * descrizione:	Funzione responsabile dell'invio di un segmento di requesat per la prima fase della connessione a 3 vie
+ * 
+ * parametri:   type (enum message_type):       Tipo di richiesta da inoltrare
+ *              filename (const char *):        Nome del file da inviare/ricevere (NULL nel caso di richiesta LIST)      
+ *              filename_length (size_t):       Lunghezza del nome del file (0 nel caso di richiesta LIST)
+ *
+ * return:	Numero di byte inviati (ssize_t)
+ *
+ */
 ssize_t send_request(enum message_type type, const char *filename, size_t filename_length)
 {
         gbn_ftp_header_t header;
@@ -423,6 +522,18 @@ ssize_t send_request(enum message_type type, const char *filename, size_t filena
         return wsize;
 }
 
+/*
+ * funzione:	send_ack
+ * --------------------
+ * descrizione:	Funzione responsabile dell'invio di un segmento di ACK
+ * 
+ * parametri:   type (enum message_type):       Tipo di richiesta da inoltrare
+ *              seq_num (unsigned int):         Numero di sequenza da riscontrare      
+ *              filename_length (size_t):       Lunghezza del nome del file
+ *
+ * return:	Numero di byte inviati al receiver (ssize_t)
+ *
+ */
 ssize_t send_ack(enum message_type type, unsigned int seq_num, bool is_last)
 {
         gbn_ftp_header_t header;
@@ -451,6 +562,22 @@ ssize_t send_ack(enum message_type type, unsigned int seq_num, bool is_last)
         return wsize;
 }
 
+/*
+ * funzione:	request_loop
+ * --------------------
+ * descrizione:	Funzione responsabile della gestione della fase di richiesta connessione al server
+ *
+ * parametri:   writefd (int):                          Descrittore file da chiudere nel caso di failure
+ *              type (enum message_type):               Tipo di richiesta
+ *              filename (const char *):                Nome del file da inviare/ricevere (NULL nel caso di richiesta LIST) 
+ *              status_ptr (enum connection_status *):  Puntatore ad uno stato di connessione
+ *              error_ret (bool *):                     Puntatore ad una variabile booleana da settare a true in caso di errore
+ *              can_connect (bool *):                   Puntatore ad una variabile booleana da settare a false nel caso in cui non ci si riesca a connettere                      
+ *
+ * return:	true    nel caso in cui non vi sono errori
+ *              false   altrimenti       
+ *
+ */
 bool request_loop(int writefd, enum message_type type, const char *filename, enum connection_status *status_ptr, bool *error_ret, bool *can_connect)
 {
         struct timeval tv;
@@ -471,7 +598,7 @@ bool request_loop(int writefd, enum message_type type, const char *filename, enu
 
         while(*status_ptr == REQUEST) {
 
-                if (i >= 10) {
+                if (i >= MAX_CONNECTION_ATTEMPT) {
                         *can_connect = false;
                         return false;
                 }
@@ -538,6 +665,19 @@ bool request_loop(int writefd, enum message_type type, const char *filename, enu
         return true;
 }
 
+/*
+ * funzione:	lg_connect_loop
+ * --------------------
+ * descrizione:	Funzione responsabile della gestione della fase di scambio messaggi (status = CONNECTED) per le richieste LIST e GET
+ *
+ * parametri:   writefd (int):                          Descrittore file su cui scrivere
+ *              type (enum message_type):               Tipo di richiesta
+ *              status_ptr (enum connection_status *):  Puntatore ad uno stato di connessione
+ *
+ * return:	true    nel caso in cui non vi sono errori
+ *              false   altrimenti       
+ *
+ */
 bool lg_connect_loop(int writefd, enum message_type type, enum connection_status *status_ptr)
 {
         unsigned int expected_seq_num, last_acked_seq_num;
@@ -617,6 +757,15 @@ bool lg_connect_loop(int writefd, enum message_type type, enum connection_status
         return true;
 }
 
+/*
+ * funzione:	p_connect_loop
+ * --------------------
+ * descrizione:	Funzione responsabile della gestione della ricezione degli ACK nel caso di richiestaa PUT (status = CONNECTED)
+ *
+ * return:	true    nel caso in cui non vi sono errori
+ *              false   altrimenti       
+ *
+ */
 bool p_connect_loop(void)
 {
         gbn_ftp_header_t recv_header;
@@ -689,6 +838,15 @@ bool p_connect_loop(void)
         return true;
 }
 
+/*
+ * funzione:	list
+ * --------------------
+ * descrizione:	Funzione responsabile dell'intera esecuzione dell'operazione LIST
+ *
+ * return:	true    nel caso in cui non vi sono errori
+ *              false   altrimenti       
+ *
+ */
 bool list(void) 
 {
         enum connection_status status = REQUEST;
@@ -731,6 +889,15 @@ bool list(void)
         return true;
 }
 
+/*
+ * funzione:	get_file
+ * --------------------
+ * descrizione:	Funzione responsabile dell'intera esecuzione dell'operazione GET
+ *
+ * return:	true    nel caso in cui non vi sono errori
+ *              false   altrimenti       
+ *
+ */
 bool get_file(void) 
 {
         enum connection_status status;
@@ -800,6 +967,15 @@ bool get_file(void)
         return true;
 }
 
+/*
+ * funzione:	init_put_args
+ * --------------------
+ * descrizione:	Funzione responsabile dell'inizializzazione della struct args per la richiesta PUT
+ *
+ * return:	true    nel caso in cui non vi sono errori
+ *              false   altrimenti       
+ *
+ */
 bool init_put_args(void)
 {
         if ((args = malloc(sizeof(struct put_args))) == NULL) {
@@ -850,6 +1026,15 @@ bool init_put_args(void)
         
 }
 
+/*
+ * funzione:	init_put_args
+ * --------------------
+ * descrizione:	Funzione responsabile della deallocazione delle aree di memoria allocate per la richiesta PUT
+ *
+ * return:	true    nel caso in cui non vi sono errori
+ *              false   altrimenti       
+ *
+ */
 bool dispose_put_args(void)
 {
         if (args != NULL) {
@@ -881,6 +1066,15 @@ bool dispose_put_args(void)
         return true;
 }
 
+/*
+ * funzione:	put_file
+ * --------------------
+ * descrizione:	Funzione responsabile dell'intera esecuzione dell'operazione PUT
+ *
+ * return:	true    nel caso in cui non vi sono errori
+ *              false   altrimenti       
+ *
+ */
 bool put_file(void) 
 {
         size_t filename_size;
@@ -950,7 +1144,7 @@ bool put_file(void)
                 return false;                
         }
 
-        if (pthread_create(&args->tid, NULL, put_sender_routine, args)) {
+        if (pthread_create(&args->tid, NULL, put_sender_routine, NULL)) {
                 perr("{ERROR} [Main Thread] Unable to spawn sender thread");
                 return false;
         }
@@ -979,6 +1173,15 @@ bool put_file(void)
         return true;
 }
 
+/*
+ * funzione:	check_installation
+ * --------------------
+ * descrizione:	Funzione responsabile della verifica della corretta installazione del client
+ *
+ * return:	true    nel caso in cui non vi sono errori
+ *              false   altrimenti       
+ *
+ */
 bool check_installation(void) 
 {
         char path[PATH_SIZE];
@@ -992,6 +1195,15 @@ bool check_installation(void)
                 return false;
 }
 
+/*
+ * funzione:	load_header
+ * --------------------
+ * descrizione:	Funzione responsabile del caricamento di un header per l'applicazione in stile figlet
+ *
+ * return:	true    nel caso in cui non vi sono errori
+ *              false   altrimenti       
+ *
+ */
 bool load_header(void)
 {
         int fd;
@@ -1019,6 +1231,17 @@ bool load_header(void)
         return true;
 }
 
+/*
+ * funzione:	main
+ * --------------------
+ * descrizione:	Entry point dell'applicazione
+ *
+ * parametri:   argc (int):             Numero di parametri immessi da linea di comando 
+ *              argv (char **):         Vettore delle stringhe immesse da linea di comando 
+ *
+ * return:      Valore d'uscita del processo    
+ *
+ */
 int main(int argc, char **argv)
 {
         char address_string[ADDRESS_STRING_LENGTH];
