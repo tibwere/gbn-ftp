@@ -12,13 +12,15 @@ const struct gbn_config DEFAULT_GBN_CONFIG = {
 
 void set_sequence_number(gbn_ftp_header_t *header, unsigned int seq_no) 
 {
-        if (seq_no >= MAX_SEQ_NUMBER) {
-                fprintf(stderr, "Sequence number must be smaller then %d\n", MAX_SEQ_NUMBER);
-                abort();
-        }
+        // if (seq_no >= MAX_SEQ_NUMBER) {
+        //         fprintf(stderr, "Sequence number must be smaller then %d\n", MAX_SEQ_NUMBER);
+        //         abort();
+        // }
 
         int flags = *header & BITMASK_SIZE;
-        int seq = seq_no << BITMASK_SIZE;
+        
+        // TODO da verificare questo approccio !!!
+        int seq = seq_no % MAX_SEQ_NUMBER << BITMASK_SIZE;
 
         *header = seq | flags;
 }

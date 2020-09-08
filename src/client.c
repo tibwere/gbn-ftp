@@ -84,6 +84,7 @@ enum app_usages modality;
 
 /* PROTOTIPI */
 void sig_handler(int signo); 
+void deserialize_configuration(struct gbn_config *config, char *ser);
 ssize_t send_file_chunk(void);
 bool handle_retransmit(void);
 void *put_sender_routine(void *dummy);
@@ -106,8 +107,8 @@ bool load_header();
                                       
 /*
  * funzione:	sig_handler
- * --------------------
- * descrizione:	Gestore dei segnali dell'applicazione client.
+ * 
+ * descrizione:	Gestore dei segnali dell'applicazione client
  *
  * parametri:	signo (int):    Numero del segnale catturato
  *
@@ -126,11 +127,30 @@ void sig_handler(__attribute__((unused)) int signo)
 }
 
 /*
+ * funzione:	deserialize_configuration
+ * 
+ * descrizione:	Parser della struct di configurazione a partire dalla rappresentazione a stringa
+ *
+ * parametri:	config (struct gbn_config *):   Puntatore alla struct da configurare
+ *              ser (char *):                   Stringa da converire
+ *
+ */
+void deserialize_configuration(struct gbn_config *config, char *ser)
+{
+        config->N = strtol(strtok(ser, ";"), NULL, 10);
+        config->rto_usec = strtol(strtok(NULL, ";"), NULL, 10);
+        config->is_adaptive = strtol(strtok(NULL, ";"), NULL, 10);
+
+        return;
+}
+
+
+/*
  * funzione:	send_file_chunk
- * --------------------
+ * 
  * descrizione:	Funzione responsabile dell'invio di un chunk del file
  *              n.b.    Implementa la funzionalità rdt_send(data) dell'automa sender GBN
- *                      nel caso in cui sono disponibili ancora numeri di sequenza utilizzabili.
+ *                      nel caso in cui sono disponibili ancora numeri di sequenza utilizzabili
  *
  * return:	Numero di byte inviati (ssize_t)
  *
@@ -197,7 +217,7 @@ ssize_t send_file_chunk(void)
 
 /*
  * funzione:	handle_retransmit
- * --------------------
+ * 
  * descrizione:	Funzione responsabile dell'invio dell'intera finestra a seguito della scadenza di un timeout
  *              n.b.    Implementa la funzionalità timeout dell'automa sender GBN
  *
@@ -242,7 +262,7 @@ bool handle_retransmit(void)
 
 /*
  * funzione:	put_sender_routine
- * --------------------
+ * 
  * descrizione:	Entry point del thread spawnato per l'invio dei chunk al server in caso di operazione PUT
  *
  * parametri:   dummy (void *): Valore non utilizzato (NULL)
@@ -376,7 +396,7 @@ void *put_sender_routine(__attribute__((unused)) void *dummy)
 
 /*
  * funzione:	exit_client
- * --------------------
+ * 
  * descrizione:	Funzione responsabile della fase di chiusura del client
  *
  * parametri:   status (int):   Valore d'uscita del processo 
@@ -406,7 +426,7 @@ void exit_client(int status)
 
 /*
  * funzione:	parse_cmd
- * --------------------
+ * 
  * descrizione:	Funzione responsabile del parsing della command line
  *
  * parametri:   argc (int):             Numero di parametri immessi da linea di comando 
@@ -458,7 +478,7 @@ enum app_usages parse_cmd(int argc, char **argv, char *address)
 
 /*
  * funzione:	set_sockadrr_in
- * --------------------
+ * 
  * descrizione:	Funzione responsabile dell'impostazione dei parametri della struttura sockaddr_in
  *
  * parametri:   server_sockaddr (struct sockaddr_in *): Puntatore alla struttra sockaddr_in da impostare        
@@ -485,7 +505,7 @@ bool set_sockadrr_in(struct sockaddr_in *server_sockaddr, const char *address_st
 
 /*
  * funzione:	send_request
- * --------------------
+ * 
  * descrizione:	Funzione responsabile dell'invio di un segmento di requesat per la prima fase della connessione a 3 vie
  * 
  * parametri:   type (enum message_type):       Tipo di richiesta da inoltrare
@@ -524,7 +544,7 @@ ssize_t send_request(enum message_type type, const char *filename, size_t filena
 
 /*
  * funzione:	send_ack
- * --------------------
+ * 
  * descrizione:	Funzione responsabile dell'invio di un segmento di ACK
  * 
  * parametri:   type (enum message_type):       Tipo di richiesta da inoltrare
@@ -564,7 +584,7 @@ ssize_t send_ack(enum message_type type, unsigned int seq_num, bool is_last)
 
 /*
  * funzione:	request_loop
- * --------------------
+ * 
  * descrizione:	Funzione responsabile della gestione della fase di richiesta connessione al server
  *
  * parametri:   writefd (int):                          Descrittore file da chiudere nel caso di failure
@@ -667,7 +687,7 @@ bool request_loop(int writefd, enum message_type type, const char *filename, enu
 
 /*
  * funzione:	lg_connect_loop
- * --------------------
+ * 
  * descrizione:	Funzione responsabile della gestione della fase di scambio messaggi (status = CONNECTED) per le richieste LIST e GET
  *
  * parametri:   writefd (int):                          Descrittore file su cui scrivere
@@ -759,7 +779,7 @@ bool lg_connect_loop(int writefd, enum message_type type, enum connection_status
 
 /*
  * funzione:	p_connect_loop
- * --------------------
+ * 
  * descrizione:	Funzione responsabile della gestione della ricezione degli ACK nel caso di richiestaa PUT (status = CONNECTED)
  *
  * return:	true    nel caso in cui non vi sono errori
@@ -813,7 +833,7 @@ bool p_connect_loop(void)
                                 gettimeofday(&tv, NULL);
                                 adapt->sampleRTT = elapsed_usec(&adapt->saved_tv, &tv);
                                 adapt->estimatedRTT = ((1 - ALPHA) * adapt->estimatedRTT) + (ALPHA * adapt->sampleRTT);
-                                adapt->devRTT = ((1 - BETA) * adapt->devRTT) + (BETA * abs_long(adapt->sampleRTT - adapt->estimatedRTT));
+                                adapt->devRTT = ((1 - BETA) * adapt->devRTT) + (BETA * ABS(adapt->sampleRTT - adapt->estimatedRTT));
                                 adapt->restart = true;
 
                                 #ifdef DEBUG
@@ -840,7 +860,7 @@ bool p_connect_loop(void)
 
 /*
  * funzione:	list
- * --------------------
+ * 
  * descrizione:	Funzione responsabile dell'intera esecuzione dell'operazione LIST
  *
  * return:	true    nel caso in cui non vi sono errori
@@ -891,7 +911,7 @@ bool list(void)
 
 /*
  * funzione:	get_file
- * --------------------
+ * 
  * descrizione:	Funzione responsabile dell'intera esecuzione dell'operazione GET
  *
  * return:	true    nel caso in cui non vi sono errori
@@ -969,7 +989,7 @@ bool get_file(void)
 
 /*
  * funzione:	init_put_args
- * --------------------
+ * 
  * descrizione:	Funzione responsabile dell'inizializzazione della struct args per la richiesta PUT
  *
  * return:	true    nel caso in cui non vi sono errori
@@ -1028,7 +1048,7 @@ bool init_put_args(void)
 
 /*
  * funzione:	init_put_args
- * --------------------
+ * 
  * descrizione:	Funzione responsabile della deallocazione delle aree di memoria allocate per la richiesta PUT
  *
  * return:	true    nel caso in cui non vi sono errori
@@ -1068,7 +1088,7 @@ bool dispose_put_args(void)
 
 /*
  * funzione:	put_file
- * --------------------
+ * 
  * descrizione:	Funzione responsabile dell'intera esecuzione dell'operazione PUT
  *
  * return:	true    nel caso in cui non vi sono errori
@@ -1175,7 +1195,7 @@ bool put_file(void)
 
 /*
  * funzione:	check_installation
- * --------------------
+ * 
  * descrizione:	Funzione responsabile della verifica della corretta installazione del client
  *
  * return:	true    nel caso in cui non vi sono errori
@@ -1197,7 +1217,7 @@ bool check_installation(void)
 
 /*
  * funzione:	load_header
- * --------------------
+ * 
  * descrizione:	Funzione responsabile del caricamento di un header per l'applicazione in stile figlet
  *
  * return:	true    nel caso in cui non vi sono errori
@@ -1233,7 +1253,7 @@ bool load_header(void)
 
 /*
  * funzione:	main
- * --------------------
+ * 
  * descrizione:	Entry point dell'applicazione
  *
  * parametri:   argc (int):             Numero di parametri immessi da linea di comando 

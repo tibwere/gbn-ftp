@@ -274,7 +274,7 @@ ssize_t lg_send_new_port_mess(long id)
         set_last(&header, false);
         set_ack(&header, false);
 
-        serialize_configuration(config, serialized_config);        
+        snprintf(serialized_config, CHUNK_SIZE, "%d;%ld;%d", config->N, config->rto_usec, config->is_adaptive);       
 
         while (get_status_safe(&winfo[id].status, &winfo[id].mutex) == REQUEST) {
 
@@ -343,7 +343,7 @@ ssize_t p_send_new_port_mess(long id)
         memset(error_message, 0x0, ERR_SIZE);
         memset(serialized_config, 0x0, CHUNK_SIZE);
 
-        serialize_configuration(config, serialized_config);
+        snprintf(serialized_config, CHUNK_SIZE, "%d;%ld;%d", config->N, config->rto_usec, config->is_adaptive); 
 
         while (get_status_safe(&winfo[id].status, &winfo[id].mutex) == REQUEST) {
 
@@ -1184,7 +1184,7 @@ bool handle_recv(int id)
                         gettimeofday(&tv, NULL);
                         adapt[id].sampleRTT = elapsed_usec(&adapt[id].saved_tv, &tv);
                         adapt[id].estimatedRTT = ((1 - ALPHA) * adapt[id].estimatedRTT) + (ALPHA * adapt[id].sampleRTT);
-                        adapt[id].devRTT = ((1 - BETA) * adapt[id].devRTT) + (BETA * abs_long(adapt[id].sampleRTT - adapt[id].estimatedRTT));
+                        adapt[id].devRTT = ((1 - BETA) * adapt[id].devRTT) + (BETA * ABS(adapt[id].sampleRTT - adapt[id].estimatedRTT));
                         adapt[id].restart = true;
 
                         #ifdef DEBUG
