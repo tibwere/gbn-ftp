@@ -22,6 +22,7 @@
 #define START_WORKER_PORT 49152
 #define MAX_PORT_NUM 65535
 
+#define MIN(x, y) (((x) < (y)) ? (x) : (y))
 
 struct worker_info {
         int socket;                                     /* socket dedicata per la comunicazione */
@@ -138,6 +139,11 @@ bool handle_retransmit(long id)
         winfo[id].next_seq_num = winfo[id].base;
         lseek(winfo[id].fd, base * CHUNK_SIZE, SEEK_SET);
         gettimeofday(&winfo[id].start_timer, NULL);
+
+        if (config->is_adaptive) {
+                adapt[id].estimatedRTT = MIN(adapt[id].estimatedRTT * 2, MAX_ERTT_SCALE * config->rto_usec);
+                adapt[id].devRTT = MIN(adapt[id].devRTT * 2, MAX_DRTT_USEC);
+        }
 
         if (pthread_mutex_unlock(&winfo[id].mutex)) {
                 perr(error_message);
@@ -647,9 +653,14 @@ void *sender_routine(void *args)
                                                 return false;
                                         }
 
-                                        while (winfo[id].next_seq_num >= winfo[id].base + config->N) {
-                                                ts.tv_sec = winfo[id].start_timer.tv_sec + floor((double) (config->rto_usec + winfo[id].start_timer.tv_usec) / (double) 1000000);
-                                                ts.tv_nsec = ((winfo[id].start_timer.tv_usec + config->rto_usec) % 1000000) * 1000;
+                                        while (!can_send_more_segment_safe(&winfo[id].base, &winfo[id].next_seq_num, config->N, &winfo[id].mutex)) {
+                                                if (config->is_adaptive) {
+                                                        ts.tv_sec = winfo[id].start_timer.tv_sec + floor((double) (get_adaptive_rto_safe(&adapt[id], &winfo[id].mutex) + winfo[id].start_timer.tv_usec) / (double) 1000000);
+                                                        ts.tv_nsec = ((winfo[id].start_timer.tv_usec + get_adaptive_rto_safe(&adapt[id], &winfo[id].mutex)) % 1000000) * 1000;
+                                                } else {
+                                                        ts.tv_sec = winfo[id].start_timer.tv_sec + floor((double) (config->rto_usec + winfo[id].start_timer.tv_usec) / (double) 1000000);
+                                                        ts.tv_nsec = ((winfo[id].start_timer.tv_usec + config->rto_usec) % 1000000) * 1000;                                                       
+                                                }
                                                 
                                                 ret = pthread_cond_timedwait(&winfo[id].cond_var, &winfo[id].cond_mutex, &ts);
 
@@ -705,8 +716,8 @@ void *sender_routine(void *args)
                                                 FD_CLR(winfo[id].socket, &all_fds);
                                                 set_status_safe(&winfo[id].status, QUIT, &winfo[id].mutex);      
                                         }
-                                                
-                                        ++timeout_counter;
+
+                                        ++timeout_counter;     
                                 } else {
 
                                         timeout_counter = 1;
@@ -743,9 +754,11 @@ void *sender_routine(void *args)
                 winfo[id].id_string,
                 winfo[id].last_rtt);
 
-        printf("{TEST} %s SEND TIME %ld usec\n", 
+        printf("{TEST} %s SEND TIME %ld usec (for %d/%ld B)\n", 
                 winfo[id].id_string,
-                elapsed_usec(&winfo[id].start_tx, &winfo[id].end_tx));
+                elapsed_usec(&winfo[id].start_tx, &winfo[id].end_tx),
+                winfo[id].next_seq_num * CHUNK_SIZE,
+                winfo[id].number_of_chunks * CHUNK_SIZE);
         #endif
 
         pthread_exit(NULL);
@@ -1149,17 +1162,7 @@ bool handle_recv(int id)
                 winfo[id].last_rtt = adapt[id].estimatedRTT + (4 * adapt[id].devRTT);
                 #endif 
 
-                if (pthread_sigmask(SIG_BLOCK, &t_set, NULL)) {
-                        perr("{ERROR} [Main Thread] Block of signals before critical section failed");
-                        return false;                                
-                }
-
                 set_status_safe(&winfo[id].status, QUIT, &winfo[id].mutex);
-
-                if (pthread_sigmask(SIG_UNBLOCK, &t_set, NULL)) {
-                        perr("{ERROR} [Main Thread] Block of signals before critical section failed");
-                        return false;                                
-                }
                 
                 FD_CLR(winfo[id].socket, &all_fds);
 
@@ -1168,11 +1171,6 @@ bool handle_recv(int id)
                 #endif
 
                 return true;
-        }
-
-        if (pthread_sigmask(SIG_BLOCK, &t_set, NULL)) {
-                perr("{ERROR} [Main Thread] Block of signals before critical section failed");
-                return false;                                
         }
 
         if (pthread_mutex_lock(&winfo[id].mutex)) {
@@ -1206,11 +1204,6 @@ bool handle_recv(int id)
                 snprintf(error_message, ERR_SIZE, "{ERROR} [Main Thread] Syncronization protocol for worker threads broken (worker_mutex_%d)", id);
                 perr(error_message);
                 return false;
-        }
-
-        if (pthread_sigmask(SIG_UNBLOCK, &t_set, NULL)) {
-                perr("{ERROR} [Main Thread] Block of signals before critical section failed");
-                return false;                                
         }
 
         return true;

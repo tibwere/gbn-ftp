@@ -3,10 +3,12 @@
 
 #define ERR_SIZE 256
 #define PATH_SIZE 1024
-#define MAX_TO 8
+#define MAX_TO 16
 #define LAST_MESSAGE_LOOP 4
 #define PROBABILITY 0.01
 #define MAX_TO_SEC 10
+#define MAX_ERTT_SCALE 50000
+#define MAX_DRTT_USEC 25000
 
 
 #define perr(mess) detailed_perror(mess, __FILE__, __LINE__)
