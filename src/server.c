@@ -30,7 +30,7 @@ struct worker_info {
         volatile enum connection_status status;         /* stato della connessione {FREE, REQUEST, CONNECTED, TIMEOUT, QUIT} */
         struct sockaddr_in client_sockaddr;             /* struttura sockaddr_in del client utilizzata nelle funzioni di send e receive */
         pthread_mutex_t mutex;                          /* mutex utilizzato per la sincronizzazione fra main thread e servente i-esimo */
-        pthread_mutex_t cond_mutex;
+        pthread_mutex_t cond_mutex;                     /* mutex utilizzato come guardia per la variabile condizionale */
         pthread_cond_t cond_var;                        /* variabile condizionale utilizzata in un timed_wait nella fase di connessione */
         enum message_type modality;                     /* modalità scelta d'utilizzo */
         char filename[CHUNK_SIZE];                      /* nome del file su cui lavorare */
@@ -39,9 +39,9 @@ struct worker_info {
         unsigned int expected_seq_num;                  /* variabile expected_seq_num del protocollo gbn associata alla connessione */
         unsigned int last_acked_seq_num;                /* variabile last_acked_seq_num del protocollo gbn associata alla connessione */
         struct timeval start_timer;                     /* struttura utilizzata per la gestione del timer */
-        pthread_t tid;                                  /* ID del thread servent e*/
+        pthread_t tid;                                  /* ID del thread servente*/
         int fd;                                         /* descrittore del file su cui si deve operare */ 
-       
+        long number_of_chunks;
         #ifdef TEST
         struct timeval first_ack;
         struct timeval full_window;
@@ -197,7 +197,7 @@ ssize_t send_file_chunk(long id)
                 set_sequence_number(&header, get_gbn_param_safe(&winfo[id].next_seq_num, &winfo[id].mutex));
                 set_ack(&header, false);      
                 set_err(&header, false);  
-                set_last(&header, (rsize < CHUNK_SIZE));  
+                set_last(&header, (winfo[id].next_seq_num == winfo[id].number_of_chunks));  
 
                 #ifdef TEST
                 if (winfo[id].next_seq_num == 1)
@@ -641,7 +641,6 @@ void *sender_routine(void *args)
                                                 }
                                         }                                
                                 } else {
-
                                         if (pthread_mutex_lock(&winfo[id].cond_mutex)) {
                                                 snprintf(err_mess, ERR_SIZE, "{ERROR} %s Syncronization protocol for worker threads broken (worker_cond_mutex)", winfo[id].id_string);
                                                 perr(err_mess);
@@ -680,7 +679,17 @@ void *sender_routine(void *args)
                         case TIMEOUT:
 
                                 #ifdef DEBUG
-                                printf("{DEBUG} %s Timeout event (%d)\n", winfo[id].id_string, winfo[id].base);
+                                if (config->is_adaptive) {
+                                        printf("{DEBUG} %s Timeout event (%d) (%ld usec)\n", 
+                                                winfo[id].id_string, 
+                                                winfo[id].base, 
+                                                adapt[id].estimatedRTT + 4 * adapt[id].devRTT);
+                                } else {
+                                        printf("{DEBUG} %s Timeout event (B = %d N = %d)\n", 
+                                                winfo[id].id_string, 
+                                                winfo[id].base,
+                                                winfo[id].next_seq_num);
+                                }
                                 #endif       
 
                                 if (get_gbn_param_safe(&winfo[id].base, &winfo[id].mutex) == last_base_for_timeout) {
@@ -940,6 +949,9 @@ bool start_sender(long index, struct sockaddr_in *client_sockaddr, enum message_
                         return false;
                 }
         }
+        
+        winfo[index].number_of_chunks = ceil((double) lseek(winfo[index].fd, 0, SEEK_END) / (double) CHUNK_SIZE);
+        lseek(winfo[index].fd, 0, SEEK_SET);
 
         if ((winfo[index].socket = init_socket(winfo[index].port)) == -1) 
                 return false;
@@ -1119,6 +1131,12 @@ bool handle_recv(int id)
                 gettimeofday(&winfo[id].first_ack, NULL);
         #endif
 
+        if (pthread_cond_signal(&winfo[id].cond_var)) {
+                snprintf(error_message, ERR_SIZE, "{ERROR} [Main Thread] Syncronization protocol for worker threads broken (worker_condvar_%d)", id);
+                perr(error_message);
+                return false;
+        }
+
         if (get_sequence_number(recv_header) == 0) {
                 set_status_safe(&winfo[id].status, CONNECTED, &winfo[id].mutex);
                 return true;
@@ -1193,12 +1211,6 @@ bool handle_recv(int id)
         if (pthread_sigmask(SIG_UNBLOCK, &t_set, NULL)) {
                 perr("{ERROR} [Main Thread] Block of signals before critical section failed");
                 return false;                                
-        }
-
-        if (pthread_cond_signal(&winfo[id].cond_var)) {
-                snprintf(error_message, ERR_SIZE, "{ERROR} [Main Thread] Syncronization protocol for worker threads broken (worker_condvar_%d)", id);
-                perr(error_message);
-                return false;
         }
 
         return true;

@@ -122,7 +122,7 @@ static void get_segment(char *message, gbn_ftp_header_t *header, void *payload, 
                 memcpy(header, message, header_size);
                 *header = ntohl(*header);
         }
-        
+
         if (payload != NULL)
                 memcpy(payload, (message + header_size), message_size - header_size);
 }
@@ -166,7 +166,8 @@ ssize_t gbn_receive(int socket, gbn_ftp_header_t *header, void *payload, const s
         else
                 received_size = recv(socket, message, message_size, 0);
 
-        get_segment(message, header, payload, received_size);
+        if (received_size != -1)
+                get_segment(message, header, payload, received_size);
 
         return received_size;
 }

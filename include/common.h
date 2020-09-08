@@ -3,7 +3,7 @@
 
 #define ERR_SIZE 256
 #define PATH_SIZE 1024
-#define MAX_TO 4
+#define MAX_TO 8
 #define LAST_MESSAGE_LOOP 4
 #define PROBABILITY 0.01
 #define MAX_TO_SEC 10

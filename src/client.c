@@ -48,6 +48,7 @@ struct put_args {
         enum connection_status status;          /* stato della connessione {FREE, REQUEST, CONNECTED, TIMEOUT, QUIT} */
         struct timeval start_timer;             /* struttura utilizzata per la gestione del timer */
         pthread_t tid;                          /* ID del thread servente */
+        long number_of_chunks;
 };
 
 
@@ -120,7 +121,7 @@ ssize_t send_file_chunk(void)
                 set_sequence_number(&header, args->next_seq_num);
                 set_ack(&header, false);      
                 set_err(&header, false);
-                set_last(&header, (rsize < CHUNK_SIZE));   
+                set_last(&header, (args->next_seq_num == args->number_of_chunks));   
 
                 if ((wsize = gbn_send(sockfd, header, buff, rsize, NULL)) == -1) {
                         perr("{ERROR} [Sender Thread] Unable to send chunk to server");
@@ -136,7 +137,7 @@ ssize_t send_file_chunk(void)
                         return -1;
                 }
 
-                if (config->is_adaptive) {
+                if (config->is_adaptive && args->status == CONNECTED) {
                         if (adapt->restart) {
                                 gettimeofday(&adapt->saved_tv, NULL);
                                 adapt->seq_num = args->next_seq_num;
@@ -175,6 +176,11 @@ bool handle_retransmit(void)
         args->next_seq_num = args->base;
         lseek(args->fd, base * CHUNK_SIZE, SEEK_SET);
         gettimeofday(&args->start_timer, NULL);
+        
+        if (config->is_adaptive) {
+                adapt->estimatedRTT = 2 * adapt->estimatedRTT;
+                adapt->devRTT = 2 * adapt->devRTT;
+        }
 
         if (pthread_mutex_unlock(&args->mutex)) {
                 perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
@@ -261,7 +267,6 @@ void *put_sender_routine(__attribute__((unused)) void *dummy)
 
 
                         case TIMEOUT:
-
                                 #ifdef DEBUG
                                 printf("{DEBUG} [Sender Thread] Timeout event (%d)\n", args->base);
                                 #endif       
@@ -545,6 +550,7 @@ bool lg_connect_loop(int writefd, enum message_type type, enum connection_status
 
                 read_fds = std_fds;
                 tv.tv_sec = MAX_TO_SEC;
+                tv.tv_usec = 0;
 
                 if ((retval = select(sockfd + 1, &read_fds, NULL, NULL, &tv)) == -1) {
                         perr("{ERROR} [Main Thread] Unable to receive pkt from server (select)");
@@ -552,6 +558,7 @@ bool lg_connect_loop(int writefd, enum message_type type, enum connection_status
                 }
 
                 if (retval) {
+
                         if((recv_size = gbn_receive(sockfd, &recv_header, payload, NULL)) == -1) {
                                 perr("{ERROR} [Main Thread] Unable to receive pkt from server (gbn_receive)");
                                 return false;
@@ -652,13 +659,12 @@ bool p_connect_loop(void)
                         return false;
                 }
 
-                if (config->is_adaptive) {
+                if (config->is_adaptive && args->status == CONNECTED) {
                         if (adapt->seq_num <= get_sequence_number(recv_header)) {
                                 gettimeofday(&tv, NULL);
                                 adapt->sampleRTT = elapsed_usec(&adapt->saved_tv, &tv);
                                 adapt->estimatedRTT = ((1 - ALPHA) * adapt->estimatedRTT) + (ALPHA * adapt->sampleRTT);
                                 adapt->devRTT = ((1 - BETA) * adapt->devRTT) + (BETA * abs_long(adapt->sampleRTT - adapt->estimatedRTT));
-                                adapt->seq_num = get_sequence_number(recv_header);
                                 adapt->restart = true;
 
                                 #ifdef DEBUG
@@ -924,7 +930,10 @@ bool put_file(void)
                         }
                         perr("{ERROR} [Main Thread] Unable to open chosen file");
                         return false;
-                } 
+                }
+
+                args->number_of_chunks = ceil((double) lseek(args->fd, 0, SEEK_END) / (double) CHUNK_SIZE);
+                lseek(args->fd, 0, SEEK_SET);
 
                 break;
         }
