@@ -22,7 +22,6 @@
 #define START_WORKER_PORT 49152
 #define MAX_PORT_NUM 65535
 
-#define MIN(x, y) (((x) < (y)) ? (x) : (y))
 
 struct worker_info {
         int socket;                                     /* socket dedicata per la comunicazione */
@@ -141,8 +140,8 @@ bool handle_retransmit(long id)
         gettimeofday(&winfo[id].start_timer, NULL);
 
         if (config->is_adaptive) {
-                adapt[id].estimatedRTT = MIN(adapt[id].estimatedRTT * 2, MAX_ERTT_SCALE * config->rto_usec);
-                adapt[id].devRTT = MIN(adapt[id].devRTT * 2, MAX_DRTT_USEC);
+                adapt[id].estimatedRTT = MIN(adapt[id].estimatedRTT * INC_RATE, MAX_ERTT_SCALE * config->rto_usec);
+                adapt[id].devRTT = MIN(adapt[id].devRTT * INC_RATE, MAX_DRTT_USEC);
         }
 
         if (pthread_mutex_unlock(&winfo[id].mutex)) {
@@ -620,6 +619,8 @@ void *sender_routine(void *args)
         memset(err_mess, 0x0, ERR_SIZE);
         set_id_string(id);
 
+        printf("{INFO} %s is running right now\n", winfo[id].id_string);
+
         while (get_status_safe(&winfo[id].status, &winfo[id].mutex) != QUIT) {
 
                 switch (get_status_safe(&winfo[id].status, &winfo[id].mutex)) {
@@ -682,7 +683,6 @@ void *sender_routine(void *args)
                                                 perr(err_mess);
                                                 return false;
                                         }
-
                                 }
 
                                 break;
@@ -696,10 +696,9 @@ void *sender_routine(void *args)
                                                 winfo[id].base, 
                                                 adapt[id].estimatedRTT + 4 * adapt[id].devRTT);
                                 } else {
-                                        printf("{DEBUG} %s Timeout event (B = %d N = %d)\n", 
+                                        printf("{DEBUG} %s Timeout event (%d)\n", 
                                                 winfo[id].id_string, 
-                                                winfo[id].base,
-                                                winfo[id].next_seq_num);
+                                                winfo[id].base);
                                 }
                                 #endif       
 
@@ -709,6 +708,7 @@ void *sender_routine(void *args)
                                                 if (!handle_retransmit(id))
                                                         set_status_safe(&winfo[id].status, QUIT, &winfo[id].mutex);
                                         } else  {
+                                                printf("{Info} %s Failed to serve request\n", winfo[id].id_string);
                                                 #ifdef DEBUG
                                                 printf("{DEBUG} %s Maximum number of timeout reached for %d, abort\n", winfo[id].id_string, winfo[id].base);
                                                 #endif
@@ -736,9 +736,7 @@ void *sender_routine(void *args)
 
         }
 
-        #ifdef DEBUG
-        printf("{DEBUG} %s is quitting right now\n", winfo[id].id_string);
-        #endif
+        printf("{INFO} %s is quitting right now\n", winfo[id].id_string);
 
         #ifdef TEST
         printf("{TEST} %s FIRST ESTIMATED RTT = %ld usec\n", 
@@ -1165,6 +1163,8 @@ bool handle_recv(int id)
                 set_status_safe(&winfo[id].status, QUIT, &winfo[id].mutex);
                 
                 FD_CLR(winfo[id].socket, &all_fds);
+
+                printf("{Info} [Main Thread] Request from %d-th client served succesfully\n", id);
 
                 #ifdef DEBUG
                 printf("{DEBUG} [Main Thread] Comunication with %d-th client has expired\n", id);

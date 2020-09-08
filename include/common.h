@@ -9,8 +9,9 @@
 #define MAX_TO_SEC 10
 #define MAX_ERTT_SCALE 50000
 #define MAX_DRTT_USEC 25000
+#define INC_RATE 1.25
 
-
+#define MIN(x, y) (((x) < (y)) ? (x) : (y))
 #define perr(mess) detailed_perror(mess, __FILE__, __LINE__)
 
 enum app_usages {

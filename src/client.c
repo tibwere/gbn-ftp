@@ -148,12 +148,12 @@ ssize_t send_file_chunk(void)
                 if (args->base == args->next_seq_num) 
                         gettimeofday(&args->start_timer, NULL);
 
+                args->next_seq_num++;
+
                 if (pthread_mutex_unlock(&args->mutex)) {
                         perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_mutex)");
                         return -1;
                 }
-
-                args->next_seq_num++;
 
                 return wsize; 
         }  
@@ -178,8 +178,8 @@ bool handle_retransmit(void)
         gettimeofday(&args->start_timer, NULL);
         
         if (config->is_adaptive) {
-                adapt->estimatedRTT = 2 * adapt->estimatedRTT;
-                adapt->devRTT = 2 * adapt->devRTT;
+                adapt->estimatedRTT = MIN(adapt->estimatedRTT * INC_RATE, MAX_ERTT_SCALE * config->rto_usec);
+                adapt->devRTT = MIN(adapt->devRTT * INC_RATE, MAX_DRTT_USEC);
         }
 
         if (pthread_mutex_unlock(&args->mutex)) {
@@ -238,8 +238,14 @@ void *put_sender_routine(__attribute__((unused)) void *dummy)
                                         }
 
                                         while (args->next_seq_num >= args->base + config->N) {
-                                                ts.tv_sec = args->start_timer.tv_sec + floor((double) (config->rto_usec + args->start_timer.tv_usec) / (double) 1000000);
-                                                ts.tv_nsec = ((args->start_timer.tv_usec + config->rto_usec) % 1000000) * 1000;
+
+                                                if (config->is_adaptive) {
+                                                        ts.tv_sec = args->start_timer.tv_sec + floor((double) (get_adaptive_rto_safe(adapt, &args->mutex) + args->start_timer.tv_usec) / (double) 1000000);
+                                                        ts.tv_nsec = ((args->start_timer.tv_usec + get_adaptive_rto_safe(adapt, &args->mutex)) % 1000000) * 1000;
+                                                } else {
+                                                        ts.tv_sec = args->start_timer.tv_sec + floor((double) (config->rto_usec + args->start_timer.tv_usec) / (double) 1000000);
+                                                        ts.tv_nsec = ((args->start_timer.tv_usec + config->rto_usec) % 1000000) * 1000;                                                       
+                                                }
                                                 
                                                 ret = pthread_cond_timedwait(&args->cond_var, &args->cond_mutex, &ts);
 
@@ -259,16 +265,20 @@ void *put_sender_routine(__attribute__((unused)) void *dummy)
                                                 perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_cond_mutex)");
                                                 return false;
                                         }
-
                                 }
 
                                 break;
 
-
-
                         case TIMEOUT:
+
                                 #ifdef DEBUG
-                                printf("{DEBUG} [Sender Thread] Timeout event (%d)\n", args->base);
+                                if (config->is_adaptive) {
+                                        printf("{DEBUG} [Sender Thread] Timeout event (%d) (%ld usec)\n", 
+                                                args->base, 
+                                                adapt->estimatedRTT + 4 * adapt->devRTT);
+                                } else {
+                                        printf("{DEBUG} [Sender Thread] Timeout event (%d)\n", winfo[id].base);
+                                }
                                 #endif       
 
                                 if (get_gbn_param_safe(&args->base, &args->mutex) == last_base_for_timeout) {
@@ -628,30 +638,20 @@ bool p_connect_loop(void)
                 printf("{DEBUG} [Main Thread] ACK no. %d received\n", get_sequence_number(recv_header));
                 #endif
 
+                if (pthread_cond_signal(&args->cond_var)) {
+                        perr("{ERROR} [Main Thread] Syncronization protocol for worker threads broken (worker_condvar)");
+                        return false;
+                }
+
                 if (is_last(recv_header)) {
 
-                        if (pthread_sigmask(SIG_BLOCK, &t_set, NULL)) {
-                                perr("{ERROR} [Main Thread] Block of signals before critical section failed");
-                                return false;                                
-                        }
-
                         set_status_safe(&args->status, QUIT, &args->mutex);
-
-                        if (pthread_sigmask(SIG_UNBLOCK, &t_set, NULL)) {
-                                perr("{ERROR} [Main Thread] Block of signals before critical section failed");
-                                return false;                                
-                        }
                         
                         #ifdef DEBUG
                         printf("{DEBUG} [Main Thread] Comunication with server has expired\n");
                         #endif
 
                         break;
-                }
-
-                if (pthread_sigmask(SIG_BLOCK, &t_set, NULL)) {
-                        perr("{ERROR} [Main Thread] Block of signals before critical section failed");
-                        return false;                                
                 }
 
                 if (pthread_mutex_lock(&args->mutex)) {
@@ -682,16 +682,6 @@ bool p_connect_loop(void)
 
                 if (pthread_mutex_unlock(&args->mutex)) {
                         perr("{ERROR} [Main Thread] Syncronization protocol for worker threads broken (worker_mutex)");
-                        return false;
-                }
-
-                if (pthread_sigmask(SIG_UNBLOCK, &t_set, NULL)) {
-                        perr("{ERROR} [Main Thread] Block of signals before critical section failed");
-                        return false;                                
-                }
-
-                if (pthread_cond_signal(&args->cond_var)) {
-                        perr("{ERROR} [Main Thread] Syncronization protocol for worker threads broken (worker_condvar)");
                         return false;
                 }
         }
