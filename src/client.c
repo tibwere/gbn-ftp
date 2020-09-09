@@ -350,7 +350,7 @@ void *put_sender_routine(__attribute__((unused)) void *dummy)
                                                 args->base, 
                                                 adapt->estimatedRTT + 4 * adapt->devRTT);
                                 } else {
-                                        printf("{DEBUG} [Sender Thread] Timeout event (%d)\n", winfo[id].base);
+                                        printf("{DEBUG} [Sender Thread] Timeout event (%d)\n", args->base);
                                 }
                                 #endif       
 

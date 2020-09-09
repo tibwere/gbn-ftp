@@ -643,6 +643,8 @@ bool handle_ack_messages(long id)
                                         return false;
 
                                 if (is_last(recv_header)) {
+                                        printf("{INFO} %s File received succesfully\n", winfo[id].id_string);
+
                                         for (int i = 0; i < LAST_MESSAGE_LOOP - 1; ++i)                                
                                                 if (p_send_ack(id, winfo[id].last_acked_seq_num, true) == -1)
                                                         return false;
@@ -718,6 +720,8 @@ void *receiver_routine(void *args)
         memset(err_mess, 0x0, ERR_SIZE);
         memset(path, 0x0, PATH_SIZE);
 
+        printf("{INFO} %s is running right now\n", winfo[id].id_string);
+
         snprintf(path, PATH_SIZE, "/home/%s/.gbn-ftp-public/%s", getenv("USER"), winfo[id].filename);
 
         if (pthread_sigmask(SIG_BLOCK, &t_set, NULL)) {
@@ -743,6 +747,7 @@ void *receiver_routine(void *args)
                                 break;
 
                         case TIMEOUT:
+                                printf("{INFO} %s Failed to receive file\n", winfo[id].id_string);
                                 #ifdef DEBUG
                                 printf("{DEBUG} %s Maximum wait time expires. Connection aborted!\n", winfo[id].id_string);
                                 #endif
@@ -755,6 +760,8 @@ void *receiver_routine(void *args)
                 }
 
         } while (get_status_safe(&winfo[id].status, &winfo[id].mutex) != QUIT);
+
+        printf("{INFO} %s is quitting right now\n", winfo[id].id_string);
 
         #ifdef DEBUG
         printf("{DEBUG} %s is quitting right now\n", winfo[id].id_string);
@@ -884,7 +891,7 @@ void *sender_routine(void *args)
                                                 if (!handle_retransmit(id))
                                                         set_status_safe(&winfo[id].status, QUIT, &winfo[id].mutex);
                                         } else  {
-                                                printf("{Info} %s Failed to serve request\n", winfo[id].id_string);
+                                                printf("{INFO} %s Failed to serve request\n", winfo[id].id_string);
                                                 #ifdef DEBUG
                                                 printf("{DEBUG} %s Maximum number of timeout reached for %d, abort\n", winfo[id].id_string, winfo[id].base);
                                                 #endif
@@ -931,7 +938,7 @@ void *sender_routine(void *args)
         printf("{TEST} %s SEND TIME %ld usec (for %d/%ld B)\n", 
                 winfo[id].id_string,
                 elapsed_usec(&winfo[id].start_tx, &winfo[id].end_tx),
-                winfo[id].next_seq_num * CHUNK_SIZE,
+                (winfo[id].next_seq_num - 1) * CHUNK_SIZE,
                 winfo[id].number_of_chunks * CHUNK_SIZE);
         #endif
 
@@ -1457,7 +1464,7 @@ bool handle_recv(int id)
                 
                 FD_CLR(winfo[id].socket, &all_fds);
 
-                printf("{Info} [Main Thread] Request from %d-th client served succesfully\n", id);
+                printf("{INFO} [Main Thread] Request from %d-th client served succesfully\n", id);
 
                 #ifdef DEBUG
                 printf("{DEBUG} [Main Thread] Comunication with %d-th client has expired\n", id);
@@ -1740,6 +1747,10 @@ int main(int argc, char **argv)
 
         #ifdef DEBUG
         printf("*** DEBUG MODE ***\n\n\n");
+        #endif
+
+        #ifdef TEST
+        printf("*** TEST MODE ***\n\n\n");
         #endif
 
         if (!check_installation()) {
