@@ -1,3 +1,10 @@
+/*
+ * File..: server.c
+ * Autore: Simone Tiberi M.0252795
+ *
+ */
+
+/* LIBRERIE STANDARD */
 #include <stdio.h>
 #include <unistd.h>
 #include <sys/socket.h>
@@ -14,15 +21,19 @@
 #include <errno.h>
 #include <signal.h>
 
+
+/* LIBRERIE CUSTOM */
 #include "gbnftp.h" 
 #include "common.h"
 
+
+/* MACRO IN PRECOMPILAZIONE */
 #define ID_STR_LENGTH 64
 #define CMD_SIZE 128
 #define START_WORKER_PORT 49152
 #define MAX_PORT_NUM 65535
 
-
+/* STRUTTURE DATI */
 struct worker_info {
         int socket;                                     /* socket dedicata per la comunicazione */
         char id_string[ID_STR_LENGTH];                  /* stringa identificativa del thread utile nelle stampe di debug */
@@ -41,22 +52,25 @@ struct worker_info {
         struct timeval start_timer;                     /* struttura utilizzata per la gestione del timer */
         pthread_t tid;                                  /* ID del thread servente*/
         int fd;                                         /* descrittore del file su cui si deve operare */ 
-        long number_of_chunks;
+        long number_of_chunks;                          /* numero totale di chunk da inviare */
+
         #ifdef TEST
-        struct timeval first_ack;
-        struct timeval full_window;
-        struct timeval start_tx;
-        struct timeval end_tx;
-        long last_rtt;
+        struct timeval first_ack;                       /* Istante di tempo in cui si riceve il primo ACK */
+        struct timeval full_window;                     /* Istante di tempo in cui si invia l'intera prima finestra */
+        struct timeval start_tx;                        /* Istante di tempo in cui si inizia ad inviare */
+        struct timeval end_tx;                          /* Istante di tempo in cui si termina con l'invio */
+        long last_rtt;                                  /* Entita' dell'ultimo RTT stimato */
         #endif
 };
 
 
+/* VARIABILI ESTERNE */
 extern bool verbose;
 extern char *optarg;
 extern int opterr;
 
 
+/* VARIABILI GLOBALI */
 int acceptance_sockfd;
 unsigned short int acceptance_port;
 struct worker_info *winfo;
@@ -69,6 +83,7 @@ long concurrenty_connections;
 enum app_usages modality;
 
 
+/* PROTOTIPI */
 #ifdef DEBUG
 void sig_handler(int signo); 
 #else
@@ -76,8 +91,8 @@ void sig_handler(__attribute__((unused)) int signo);
 #endif 
 bool handle_retransmit(long id); 
 ssize_t send_file_chunk(long id);
-ssize_t lg_send_new_port_mess(long id);
-ssize_t p_send_new_port_mess(long id);
+bool lg_send_new_port_mess(long id);
+bool p_send_new_port_mess(long id);
 ssize_t p_send_ack(long id, unsigned int seq_num, bool is_last); 
 bool update_tmp_ls_file(int id);
 bool handle_ack_messages(long id);
@@ -92,12 +107,20 @@ bool start_receiver(long index, struct sockaddr_in *client_sockaddr, const char 
 bool reset_worker_info(int id, bool need_destroy, bool need_create);
 bool init_worker_info(void);
 bool handle_recv(int id);
-bool send_error_message(int id, int acc_socket);
-bool dispose_leaked_resources();
-bool acceptance_loop(int acc_socket);
+bool send_error_message(int id);
+bool dispose_leaked_resources(void);
+bool acceptance_loop(void);
 bool check_installation(void); 
 
 
+/*
+ * funzione:	sig_handler
+ * 
+ * descrizione:	Gestore dei segnali dell'applicazione server
+ *
+ * parametri:	signo (int):    Numero del segnale catturato
+ *
+ */
 #ifdef DEBUG
 void sig_handler(int signo) 
 #else
@@ -111,6 +134,18 @@ void sig_handler(__attribute__((unused)) int signo)
         exit_server(EXIT_SUCCESS);
 }
 
+
+/*
+ * funzione:	is_valid_port
+ * 
+ * descrizione:	Funzione che verifica se il numero di porta inserito tramite cmdline è valido
+ *
+ * parametri:   port (unsigned short int):      Numero di porta da testare
+ *
+ * return:	true    nel caso in cui il numero è valido
+ *              false   altrimenti       
+ *
+ */
 bool is_valid_port(unsigned short int port)
 {
         bool check_for_std_range = port > 0 && port < MAX_PORT_NUM;
@@ -119,6 +154,20 @@ bool is_valid_port(unsigned short int port)
         return check_for_std_range && check_for_wrk_range; 
 }
 
+
+/*
+ * funzione:	handle_retransmit
+ * 
+ * descrizione:	Funzione responsabile dell'invio dell'intera finestra a seguito della scadenza di un timeout
+ *              n.b.    Implementa la funzionalità timeout dell'automa sender GBN
+ *
+ * parametri:   id (long):      Indice del worker per ottenere le informazioni necessarie
+ *                              dall'array globale winfo
+ *
+ * return:	true    nel caso in cui non vi sono errori
+ *              false   altrimenti       
+ *
+ */
 bool handle_retransmit(long id) 
 {
         unsigned int base; 
@@ -158,6 +207,20 @@ bool handle_retransmit(long id)
         return true;
 }
 
+
+/*
+ * funzione:	send_file_chunk
+ * 
+ * descrizione:	Funzione responsabile dell'invio di un chunk del file
+ *              n.b.    Implementa la funzionalità rdt_send(data) dell'automa sender GBN
+ *                      nel caso in cui sono disponibili ancora numeri di sequenza utilizzabili
+ *
+ * parametri:   id (long):      Indice del worker per ottenere le informazioni necessarie
+ *                              dall'array globale winfo
+ *
+ * return:	Numero di byte inviati (ssize_t)
+ *
+ */
 ssize_t send_file_chunk(long id)
 {
         gbn_ftp_header_t header;
@@ -255,7 +318,20 @@ ssize_t send_file_chunk(long id)
         return 0;    
 }
 
-ssize_t lg_send_new_port_mess(long id)
+
+/*
+ * funzione:	lg_send_new_port_mess
+ * 
+ * descrizione:	Funzione responsabile dell'invio del messaggio di NEWPORT al client (richieste di tipo LIST e GET)
+ *
+ * parametri:   id (long):      Indice del worker per ottenere le informazioni necessarie
+ *                              dall'array globale winfo
+ *
+ * return:	true    nel caso in cui non vi sono errori
+ *              false   altrimenti
+ *
+ */
+bool lg_send_new_port_mess(long id)
 {
         gbn_ftp_header_t header;
         struct timespec ts;
@@ -264,6 +340,7 @@ ssize_t lg_send_new_port_mess(long id)
         ssize_t wsize;
         char error_message[ERR_SIZE];
         char serialized_config[CHUNK_SIZE];
+        int i = 0;
 
         memset(error_message, 0x0, ERR_SIZE);
         memset(serialized_config, 0x0, CHUNK_SIZE);
@@ -277,6 +354,11 @@ ssize_t lg_send_new_port_mess(long id)
         snprintf(serialized_config, CHUNK_SIZE, "%d;%ld;%d", config->N, config->rto_usec, config->is_adaptive);       
 
         while (get_status_safe(&winfo[id].status, &winfo[id].mutex) == REQUEST) {
+
+                if (i >= MAX_CONNECTION_ATTEMPT)
+                        return false;
+
+                ++i;
 
                 if ((wsize = gbn_send(winfo[id].socket, header, serialized_config, CHUNK_SIZE, &winfo[id].client_sockaddr)) == -1) {
                         snprintf(error_message, ERR_SIZE, "{ERROR} %s Unable to send NEW_PORT message", winfo[id].id_string);
@@ -321,7 +403,20 @@ ssize_t lg_send_new_port_mess(long id)
         return true;
 }
 
-ssize_t p_send_new_port_mess(long id)
+
+/*
+ * funzione:	p_send_new_port_mess
+ * 
+ * descrizione:	Funzione responsabile dell'invio del messaggio di NEWPORT al client (richieste di tipo PUT)
+ *
+ * parametri:   id (long):      Indice del worker per ottenere le informazioni necessarie
+ *                              dall'array globale winfo
+ *
+ * return:	true    nel caso in cui non vi sono errori
+ *              false   altrimenti
+ *
+ */
+bool p_send_new_port_mess(long id)
 {
         gbn_ftp_header_t send_header, recv_header;
         int ret;
@@ -330,6 +425,7 @@ ssize_t p_send_new_port_mess(long id)
         struct timeval tv;
         char error_message[ERR_SIZE];
         char serialized_config[CHUNK_SIZE];
+        int i = 0;
 
         set_err(&send_header, false);
         set_sequence_number(&send_header, 0);
@@ -346,6 +442,11 @@ ssize_t p_send_new_port_mess(long id)
         snprintf(serialized_config, CHUNK_SIZE, "%d;%ld;%d", config->N, config->rto_usec, config->is_adaptive); 
 
         while (get_status_safe(&winfo[id].status, &winfo[id].mutex) == REQUEST) {
+
+                if (i >= MAX_CONNECTION_ATTEMPT)
+                        return false;
+
+                ++i;
 
                 if ((wsize = gbn_send(winfo[id].socket, send_header, serialized_config, CHUNK_SIZE, &winfo[id].client_sockaddr)) == -1) {
                         snprintf(error_message, ERR_SIZE, "{ERROR} %s Unable to send NEW_PORT message", winfo[id].id_string);
@@ -364,7 +465,7 @@ ssize_t p_send_new_port_mess(long id)
                 if ((ret = select(winfo[id].socket + 1, &read_fds, NULL, NULL, &tv)) == -1) {
                         snprintf(error_message, ERR_SIZE, "{ERROR} %s Unable to get message (select)", winfo[id].id_string);
                         perr(error_message);
-                        return -1;
+                        return false;
                 }
 
                 if (ret) {
@@ -381,6 +482,21 @@ ssize_t p_send_new_port_mess(long id)
         return true;
 }
 
+
+/*
+ * funzione:	p_send_ack
+ * 
+ * descrizione:	Funzione responsabile dell'invio di un riscontro nel caso di richieste di tipo PUT
+ *
+ * parametri:   id (long):              Indice del worker per ottenere le informazioni necessarie
+ *                                      dall'array globale winfo
+ *              seq_num (unsigned int): Numero di sequenza da riscontrare
+ *              is_last (bool):         true    se il segmento e' da marcare con il flag LAST
+ *                                      false   altrimenti
+ *
+ * return:      Numero di byte inviati (ssize_t)
+ *
+ */
 ssize_t p_send_ack(long id, unsigned int seq_num, bool is_last)
 {
         gbn_ftp_header_t header;
@@ -408,6 +524,19 @@ ssize_t p_send_ack(long id, unsigned int seq_num, bool is_last)
         return wsize;
 }
 
+
+/*
+ * funzione:	update_tmp_ls_file
+ * 
+ * descrizione:	Funzione responsabile dell'aggiornamento del file tmp-ls a seguito dell'inserimento di un nuovo file
+ *
+ * parametri:   id (long):      Indice del worker per ottenere le informazioni necessarie
+ *                              dall'array globale winfo
+ *
+ * return:	true    nel caso in cui non vi sono errori
+ *              false   altrimenti
+ *
+ */
 bool update_tmp_ls_file(int id)
 {
         FILE *tmp_ls_file;
@@ -448,6 +577,19 @@ bool update_tmp_ls_file(int id)
         return true;
 }
 
+
+/*
+ * funzione:	handle_ack_messages
+ * 
+ * descrizione:	Funzione responsabile della gestione dell'invio degli ACK nel caso di richiesta PUT (status = CONNECTED)
+ *
+ * parametri:   id (long):      Indice del worker per ottenere le informazioni necessarie
+ *                              dall'array globale winfo
+ *
+ * return:	true    nel caso in cui non vi sono errori
+ *              false   altrimenti       
+ *
+ */
 bool handle_ack_messages(long id)
 {       
         char payload[CHUNK_SIZE];
@@ -524,6 +666,16 @@ bool handle_ack_messages(long id)
         return true;
 }
 
+
+/*
+ * funzione:	set_id_string
+ * 
+ * descrizione:	Funzione responsabile del impostazione della stringa identificativa
+ *
+ * parametri:   id (long):      Indice del worker per ottenere le informazioni necessarie
+ *                              dall'array globale winfo      
+ *
+ */
 void set_id_string(long id)
 {
         char modality_str[5];
@@ -543,6 +695,18 @@ void set_id_string(long id)
         modality_str);
 }
 
+
+/*
+ * funzione:	receiver_routine
+ * 
+ * descrizione:	Entry point del thread spawnato per la ricezione dei chunk dal client in caso di operazione PUT
+ *
+ * parametri:   args (void *):  Indice associato al thread spawnato per accedere 
+ *                              all'array globale winfo (tipo effettivo: long)
+ *
+ * return:      Valore d'uscita del thread (NULL)	    
+ *
+ */
 void *receiver_routine(void *args) 
 {
         long id = (long) args;
@@ -567,7 +731,7 @@ void *receiver_routine(void *args)
                 switch (winfo[id].status) {
 
                         case REQUEST:
-                                if (p_send_new_port_mess(id) == -1)
+                                if (!p_send_new_port_mess(id))
                                         set_status_safe(&winfo[id].status, QUIT, &winfo[id].mutex);
   
                                 break;
@@ -599,6 +763,18 @@ void *receiver_routine(void *args)
         pthread_exit(NULL);
 }
 
+
+/*
+ * funzione:	sender_routine
+ * 
+ * descrizione:	Entry point del thread spawnato per la l'invio dei chunk al client in caso di operazione LIST e GET
+ *
+ * parametri:   args (void *):  Indice associato al thread spawnato per accedere 
+ *                              all'array globale winfo (tipo effettivo: long)
+ *
+ * return:      Valore d'uscita del thread (NULL)	    
+ *
+ */
 void *sender_routine(void *args) 
 {
         long id = (long) args;
@@ -626,7 +802,7 @@ void *sender_routine(void *args)
                 switch (get_status_safe(&winfo[id].status, &winfo[id].mutex)) {
 
                         case REQUEST:
-                                if (lg_send_new_port_mess(id) == -1)
+                                if (!lg_send_new_port_mess(id))
                                         set_status_safe(&winfo[id].status, QUIT, &winfo[id].mutex);
   
                                 break;
@@ -762,6 +938,15 @@ void *sender_routine(void *args)
         pthread_exit(NULL);
 }
 
+
+/*
+ * funzione:	exit_server
+ * 
+ * descrizione:	Funzione responsabile della fase di chiusura del server
+ *
+ * parametri:   status (int):   Valore d'uscita del processo 
+ *
+ */
 void exit_server(int status) 
 {
         if (winfo) {
@@ -803,6 +988,18 @@ void exit_server(int status)
         exit(status);
 }
 
+
+/*
+ * funzione:	parse_cmd
+ * 
+ * descrizione:	Funzione responsabile del parsing della command line
+ *
+ * parametri:   argc (int):             Numero di parametri immessi da linea di comando 
+ *              argv (char **):         Vettore delle stringhe immesse da linea di comando 
+ *
+ * return:      Modalita' d'utilizzo dell'applicazione scelta (enum app_usages)    
+ *
+ */
 enum app_usages parse_cmd(int argc, char **argv)
 {
         verbose = true;
@@ -861,6 +1058,18 @@ enum app_usages parse_cmd(int argc, char **argv)
         return STANDARD;
 }
 
+
+/*
+ * funzione:	init_socket
+ * 
+ * descrizione:	Funzione responsabile dell'apertura di un nuovo descrittore associato ad una socket
+ *              e del bind di tale descrittore alla porta
+ *
+ * parametri:   port (unsigned short int):      Numero di porta per la bind
+ *
+ * return:      Descrittore inizializzato (int)
+ *
+ */
 int init_socket(unsigned short int port)
 {
         int fd;
@@ -893,6 +1102,19 @@ int init_socket(unsigned short int port)
         return fd;
 }
 
+
+/*
+ * funzione:	get_available_worker
+ * 
+ * descrizione:	Funzione che restituisce l'indice di un worker libero per gestire una richiesta client
+ *              verificando che non vi sia già un servente associato alla medesima richiesta
+ *
+ * parametri:   addr (const struct sockaddr_in *):      Struttura contenente le informazioni del client richiedente
+ *              already_handled_ptr (bool *):           Flag booleano da settare a true se la richiesta è già servita
+ *
+ * return:      Indice trovato (long)
+ *
+ */
 long get_available_worker(const struct sockaddr_in *addr, bool *already_handled_ptr)
 {
         long ret, i;
@@ -925,6 +1147,22 @@ long get_available_worker(const struct sockaddr_in *addr, bool *already_handled_
         return ret;
 }
 
+
+/*
+ * funzione:	start_sender
+ * 
+ * descrizione:	Funzione responsabile della fase di startup del thread sender
+ *
+ * parametri:   index (long):                           Indice con cui accedere all'array winfo
+ *              client_sockaddr (struct sockaddr_in *): Puntatore alla struttura contenente le info del client
+ *              modality (enum message_type):           Tipo di richiesta effettuata      
+ *              payload (const char *):                 Payload presente del messaggio di REQUEST ricevuto
+ *              can_open_ptr (bool *):                  Flag booleano che viene settato a false se il file non esiste 
+ *
+ * return:	true    nel caso in cui non vi sono errori
+ *              false   altrimenti  
+ *
+ */
 bool start_sender(long index, struct sockaddr_in *client_sockaddr, enum message_type modality, const char *payload, bool *can_open_ptr)
 {
         char path[PATH_SIZE];
@@ -976,6 +1214,21 @@ bool start_sender(long index, struct sockaddr_in *client_sockaddr, enum message_
         return true;
 }
 
+
+/*
+ * funzione:	start_receiver
+ * 
+ * descrizione:	Funzione responsabile della fase di startup del thread receiver
+ *
+ * parametri:   index (long):                           Indice con cui accedere all'array winfo
+ *              client_sockaddr (struct sockaddr_in *): Puntatore alla struttura contenente le info del client
+ *              payload (const char *):                 Payload presente del messaggio di REQUEST ricevuto
+ *              can_open_ptr (bool *):                  Flag booleano che viene settato a false se il file è già esistente 
+ *
+ * return:	true    nel caso in cui non vi sono errori
+ *              false   altrimenti  
+ *
+ */
 bool start_receiver(long index, struct sockaddr_in *client_sockaddr, const char *payload, bool *can_open_ptr)
 {
         char path[PATH_SIZE];
@@ -1013,6 +1266,22 @@ bool start_receiver(long index, struct sockaddr_in *client_sockaddr, const char 
         return true;
 }
 
+
+/*
+ * funzione:	reset_worker_info
+ * 
+ * descrizione:	Funzione responsabile dell'inizializzazione della struttura i-esima worker_info
+ *
+ * parametri:   id (int):               Indice con cui accedere all'array winfo
+ *              need_destroy (bool):    true    se è necessaria la dispose della struttura
+ *                                      false   altrimenti
+ *              need_create (bool):     true    se la struttura va inizializzata
+ *                                      false   altrimenti
+ *
+ * return:	true    nel caso in cui non vi sono errori
+ *              false   altrimenti  
+ *
+ */
 bool reset_worker_info(int id, bool need_destroy, bool need_create)
 {
         char error_message[ERR_SIZE];
@@ -1082,6 +1351,16 @@ bool reset_worker_info(int id, bool need_destroy, bool need_create)
         return true;
 }
 
+
+/*
+ * funzione:	init_worker_info
+ * 
+ * descrizione:	Funzione responsabile dell'inizializzazione dell'array winfo
+ *
+ * return:	true    nel caso in cui non vi sono errori
+ *              false   altrimenti  
+ *
+ */
 bool init_worker_info(void) 
 {
         if((winfo = calloc(concurrenty_connections, sizeof(struct worker_info))) == NULL) {
@@ -1113,6 +1392,20 @@ bool init_worker_info(void)
         return true;
 }
 
+
+/*
+ * funzione:	handle_recv
+ * 
+ * descrizione:	Funzione responsabile dell'avanzamento della finestraa a fronte della ricezione 
+ *              di riscontri da parte del client      
+ *
+ * parametri:   id (int):       Indice del worker per ottenere le informazioni necessarie
+ *                              dall'array globale winfo
+ *
+ * return:	true    nel caso in cui non vi sono errori
+ *              false   altrimenti      
+ *
+ */
 bool handle_recv(int id) 
 {
         gbn_ftp_header_t recv_header;
@@ -1209,7 +1502,20 @@ bool handle_recv(int id)
         return true;
 }
 
-bool send_error_message(int id, int acc_socket)
+
+/*
+ * funzione:	send_error_message
+ * 
+ * descrizione:	Funzione responsabile dell'invio di un segmento di errore a fronte di una richiesta errata
+ * 
+ * parametri:   id (int):               Indice del worker per ottenere le informazioni necessarie
+ *                                      dall'array globale winfo
+ *
+ * return:	true    nel caso in cui non vi sono errori
+ *              false   altrimenti 
+ *
+ */
+bool send_error_message(int id)
 {
         ssize_t wsize = 0;
         gbn_ftp_header_t header;
@@ -1224,7 +1530,7 @@ bool send_error_message(int id, int acc_socket)
         set_err(&header, true);
 
         for (int i = 0; i < LAST_MESSAGE_LOOP; ++i) {
-                if ((wsize += gbn_send(acc_socket, header, NULL, 0, &winfo[id].client_sockaddr)) == -1) {
+                if ((wsize += gbn_send(acceptance_sockfd, header, NULL, 0, &winfo[id].client_sockaddr)) == -1) {
                         snprintf(error_message, ERR_SIZE, "{ERROR} [Main Thread] Unable to send error message to %d-th client", id);
                         perr(error_message);
                         return false;
@@ -1238,6 +1544,16 @@ bool send_error_message(int id, int acc_socket)
         return true;
 }
 
+
+/*
+ * funzione:	dispose_leaked_resources
+ * 
+ * descrizione:	Funzione responsabile della fase di dispose dei metadati associati a connessioni terminate
+ *
+ * return:	true    nel caso in cui non vi sono errori
+ *              false   altrimenti 
+ *
+ */
 bool dispose_leaked_resources(void)
 {
         for (int i = 0; i < concurrenty_connections; ++i) {
@@ -1256,7 +1572,20 @@ bool dispose_leaked_resources(void)
         return true;
 }
 
-bool acceptance_loop(int acc_socket)
+
+/*
+ * funzione:	acceptance_loop
+ * 
+ * descrizione:	Funzione cuore del server, responsabile della fase di ricezione per:
+ *                      - nuove connessioni
+ *                      - richieste GET
+ *                       - richieste LIST
+ *
+ * return:	true    nel caso in cui non vi sono errori
+ *              false   altrimenti 
+ *
+ */
+bool acceptance_loop(void)
 {
         int winfo_index, ready_fds, maxfd;
         struct sockaddr_in addr;
@@ -1267,8 +1596,8 @@ bool acceptance_loop(int acc_socket)
         bool can_open;
 
         FD_ZERO(&all_fds);
-        FD_SET(acc_socket, &all_fds);
-        maxfd = acc_socket;
+        FD_SET(acceptance_sockfd, &all_fds);
+        maxfd = acceptance_sockfd;
 
         while(true) {
                 read_fds = all_fds;
@@ -1280,9 +1609,9 @@ bool acceptance_loop(int acc_socket)
                         return false;
                 }
 
-                if (FD_ISSET(acc_socket, &read_fds)) {
+                if (FD_ISSET(acceptance_sockfd, &read_fds)) {
 
-                        if (gbn_receive(acc_socket, &header, payload, &addr) == -1) {
+                        if (gbn_receive(acceptance_sockfd, &header, payload, &addr) == -1) {
                                 perr("{ERROR} [Main Thread] Unable to receive command from clients (gbn_receive)");
                                 return false;
                         }
@@ -1325,7 +1654,7 @@ bool acceptance_loop(int acc_socket)
 
                                 if (!start_sender(winfo_index, &addr, get_message_type(header), payload, &can_open)) {
                                         if (!can_open) {
-                                                if (!send_error_message(winfo_index, acc_socket))
+                                                if (!send_error_message(winfo_index))
                                                         return false; 
                                         } else {   
                                                 return false;
@@ -1341,7 +1670,7 @@ bool acceptance_loop(int acc_socket)
 
                                 if (!start_receiver(winfo_index, &addr, payload, &can_open)) {
                                         if (!can_open) {
-                                                if (!send_error_message(winfo_index, acc_socket))
+                                                if (!send_error_message(winfo_index))
                                                         return false; 
                                         } else {   
                                                 return false;
@@ -1370,6 +1699,16 @@ bool acceptance_loop(int acc_socket)
         return true;
 }
 
+
+/*
+ * funzione:	check_installation
+ * 
+ * descrizione:	Funzione responsabile della verifica della corretta installazione del server
+ *
+ * return:	true    nel caso in cui non vi sono errori
+ *              false   altrimenti       
+ *
+ */
 bool check_installation(void) 
 {
         char path[PATH_SIZE];
@@ -1383,6 +1722,18 @@ bool check_installation(void)
                 return false;
 }
 
+
+/*
+ * funzione:	main
+ * 
+ * descrizione:	Entry point dell'applicazione
+ *
+ * parametri:   argc (int):             Numero di parametri immessi da linea di comando 
+ *              argv (char **):         Vettore delle stringhe immesse da linea di comando 
+ *
+ * return:      Valore d'uscita del processo    
+ *
+ */
 int main(int argc, char **argv)
 {
         char choice;
@@ -1462,10 +1813,9 @@ int main(int argc, char **argv)
         printf("\nServer is now listening ... \n");
         fflush(stdout);
 
-        if (!acceptance_loop(acceptance_sockfd))
+        if (!acceptance_loop())
                 exit_server(EXIT_FAILURE);
 
         close(acceptance_sockfd);        
         exit_server(EXIT_SUCCESS);
 }
-

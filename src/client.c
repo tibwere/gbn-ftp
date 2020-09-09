@@ -34,7 +34,6 @@
 /* MACRO DI PRECOMPILAZIONE */
 #define ADDRESS_STRING_LENGTH 1024
 #define HEADER_FILE_LENGTH 241
-#define MAX_CONNECTION_ATTEMPT 10
 
 #ifndef DEBUG
         #define cls() printf("\033[2J\033[H")
@@ -433,7 +432,7 @@ void exit_client(int status)
  *              argv (char **):         Vettore delle stringhe immesse da linea di comando 
  *              address (char *):       Stringa che rappresenta l'indirizzo a cui ci si vuole connettere
  *
- * return:      Modalita' d'utilizzo dell'applicazione sceltaa (enum app_usages)    
+ * return:      Modalita' d'utilizzo dell'applicazione scelta (enum app_usages)    
  *
  */
 enum app_usages parse_cmd(int argc, char **argv, char *address)
@@ -549,7 +548,8 @@ ssize_t send_request(enum message_type type, const char *filename, size_t filena
  * 
  * parametri:   type (enum message_type):       Tipo di richiesta da inoltrare
  *              seq_num (unsigned int):         Numero di sequenza da riscontrare      
- *              filename_length (size_t):       Lunghezza del nome del file
+ *              is_last (size_t):               true    se riscontra un segmento di tipo LAST
+ *                                              false   altrimenti
  *
  * return:	Numero di byte inviati al receiver (ssize_t)
  *
@@ -780,7 +780,7 @@ bool lg_connect_loop(int writefd, enum message_type type, enum connection_status
 /*
  * funzione:	p_connect_loop
  * 
- * descrizione:	Funzione responsabile della gestione della ricezione degli ACK nel caso di richiestaa PUT (status = CONNECTED)
+ * descrizione:	Funzione responsabile della gestione della ricezione degli ACK nel caso di richiesta PUT (status = CONNECTED)
  *
  * return:	true    nel caso in cui non vi sono errori
  *              false   altrimenti       
@@ -1373,4 +1373,3 @@ int main(int argc, char **argv)
   
         exit_client(EXIT_SUCCESS);
 }
-

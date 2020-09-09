@@ -1,35 +1,74 @@
+/*
+ * File..: gbnftp.c
+ * Autore: Simone Tiberi M.0252795
+ *
+ */
+
+ /* LIBRERIE STANDARD */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <arpa/inet.h>
 
+
+/* LIBRERIE CUSTOM */
 #include "gbnftp.h"
 #include "common.h"
 
+
+/* CONFIGURAZIONE DI DEFAULT */
 const struct gbn_config DEFAULT_GBN_CONFIG = {
         8, 500, true
 };
 
+/*
+ * funzione:    set_sequence_number
+ * 
+ * descrizione:	Funzione che permette di impostare il numero di sequenza in un header
+ *
+ * parametri:	header (gbn_ftp_header *):      Puntatore ad un'intestazione
+ *              seq_no (unsigned int):          Numero di sequenza da impostare
+ *
+ */
 void set_sequence_number(gbn_ftp_header_t *header, unsigned int seq_no) 
 {
-        // if (seq_no >= MAX_SEQ_NUMBER) {
-        //         fprintf(stderr, "Sequence number must be smaller then %d\n", MAX_SEQ_NUMBER);
-        //         abort();
-        // }
+        if (seq_no >= MAX_SEQ_NUMBER) {
+                fprintf(stderr, "Sequence number must be smaller then %d\n", MAX_SEQ_NUMBER);
+                abort();
+        }
 
         int flags = *header & BITMASK_SIZE;
-        
-        // TODO da verificare questo approccio !!!
-        int seq = seq_no % MAX_SEQ_NUMBER << BITMASK_SIZE;
+        int seq = seq_no << BITMASK_SIZE;
 
         *header = seq | flags;
 }
 
+
+/*
+ * funzione:    get_sequence_number
+ * 
+ * descrizione:	Funzione che permette di effettuare il retrive del numero di sequenza da un header
+ *
+ * parametri:	header (gbn_ftp_header):        Intestazione da cui si vuole prelevare il numero di sequenza
+ *
+ * return:      Numero di sequenza associato all'intestazione (unsigned int)
+ *      
+ */
 unsigned int get_sequence_number(gbn_ftp_header_t header)
 {
         return header >> BITMASK_SIZE;
 }
 
+
+/*
+ * funzione:    set_message_type
+ * 
+ * descrizione:	Funzione che permette di impostare il tipo di messaggio in un header
+ *
+ * parametri:	header (gbn_ftp_header *):      Puntatore ad un'intestazione
+ *              type (enum message_type):       Tipo da impostare
+ *
+ */
 void set_message_type(gbn_ftp_header_t *header, enum message_type type)
 {
         *header >>= TYPE_SIZE;
@@ -46,6 +85,17 @@ void set_message_type(gbn_ftp_header_t *header, enum message_type type)
         }
 }
 
+
+/*
+ * funzione:    get_message_type
+ * 
+ * descrizione:	Funzione che permette di effettuare il retrive del tipo di messaggio da un header
+ *
+ * parametri:	header (gbn_ftp_header):        Intestazione da cui si vuole prelevare il numero di sequenza
+ *
+ * return:      Tipo di messaggio associato all'intestazione (enum message_type)
+ *      
+ */
 enum message_type get_message_type(gbn_ftp_header_t header)
 {
         unsigned int flags = header & TYPE_MASK;
@@ -60,6 +110,17 @@ enum message_type get_message_type(gbn_ftp_header_t header)
                 return ZERO;
 }
 
+
+/*
+ * funzione:    set_last
+ * 
+ * descrizione:	Funzione che permette di impostare il flag LAST in un header
+ * 
+ * parametri:	header (gbn_ftp_header *):      Puntatore ad un'intestazione
+ *              is_last (bool):                 true    se il segmento e' marcato con il flag LAST
+ *                                              false   altrimenti
+ *
+ */
 void set_last(gbn_ftp_header_t *header, bool is_last)
 {
         if (is_last)
@@ -68,25 +129,71 @@ void set_last(gbn_ftp_header_t *header, bool is_last)
                 *header &= ~LAST_MASK;
 }
 
+
+/*
+ * funzione:    is_last
+ * 
+ * descrizione:	Funzione che permette di verificare se un intestazione ha settato o meno il flag LAST
+ *
+ * parametri:	header (gbn_ftp_header):        Intestazione da cui si vuole effettuare il check
+ *
+ * return:	true    se il segmento e' marcato con il flag LAST
+ *              false   altrimenti 
+ *      
+ */
 bool is_last(gbn_ftp_header_t header)
 {
         return ((header & LAST_MASK) == LAST_MASK) ? true : false;
 }
 
-void set_ack(gbn_ftp_header_t *header, bool is_conn)
+
+/*
+ * funzione:    set_ack
+ * 
+ * descrizione:	Funzione che permette di impostare il flag ACK in un header
+ * 
+ * parametri:	header (gbn_ftp_header *):      Puntatore ad un'intestazione
+ *              is_ack (bool):                  true    se il segmento e' marcato con il flag ACK
+ *                                              false   altrimenti
+ *
+ */
+void set_ack(gbn_ftp_header_t *header, bool is_ack)
 {
-        if (is_conn)
+        if (is_ack)
                 *header |= ACK_MASK;
         else
                 *header &= ~ACK_MASK;
         
 }
 
+
+/*
+ * funzione:    is_ack
+ * 
+ * descrizione:	Funzione che permette di verificare se un intestazione ha settato o meno il flag ACK
+ *
+ * parametri:	header (gbn_ftp_header):        Intestazione da cui si vuole effettuare il check
+ *
+ * return:	true    se il segmento e' marcato con il flag ACK
+ *              false   altrimenti 
+ *      
+ */
 bool is_ack(gbn_ftp_header_t header)
 {
         return ((header & ACK_MASK) == ACK_MASK) ? true : false;
 }
 
+
+/*
+ * funzione:    set_err
+ * 
+ * descrizione:	Funzione che permette di impostare il flag ERR in un header
+ * 
+ * parametri:	header (gbn_ftp_header *):      Puntatore ad un'intestazione
+ *              is_err (bool):                  true    se il segmento e' marcato con il flag ERR
+ *                                              false   altrimenti
+ *
+ */
 void set_err(gbn_ftp_header_t *header, bool is_err)
 {
         if (is_err)
@@ -96,11 +203,37 @@ void set_err(gbn_ftp_header_t *header, bool is_err)
         
 }
 
+
+/*
+ * funzione:    is_err
+ * 
+ * descrizione:	Funzione che permette di verificare se un intestazione ha settato o meno il flag ERR
+ *
+ * parametri:	header (gbn_ftp_header):        Intestazione da cui si vuole effettuare il check
+ *
+ * return:	true    se il segmento e' marcato con il flag ERR
+ *              false   altrimenti 
+ *      
+ */
 bool is_err(gbn_ftp_header_t header)
 {
         return ((header & ERR_MASK) == ERR_MASK) ? true : false;
 }
 
+
+/*
+ * funzione:    make_segment
+ * 
+ * descrizione:	Funzione responsabile dell'allocazione dinamica di un buffer in cui memorizza
+ *              la concatenazione di header e payload
+ *
+ * parametri:	header (gbn_ftp_header):        Intestazione del segmento
+ *              payload (const void *):         Payload del segmento
+ *              payload_size (size_t):          Lunghezza del payload
+ *
+ * return:	Puntatore all'area di memoria allocata 
+ *      
+ */
 static char * make_segment(gbn_ftp_header_t header, const void *payload, size_t payload_size)
 {
         char *message;
@@ -116,7 +249,20 @@ static char * make_segment(gbn_ftp_header_t header, const void *payload, size_t 
         return message;
 }
 
-static void get_segment(char *message, gbn_ftp_header_t *header, void *payload, size_t message_size)
+
+/*
+ * funzione:    get_segment
+ * 
+ * descrizione:	Funzione responsabile del parsing di un segmento ricevuto
+ *              scomponendolo in intestazione e payload
+ *
+ * parametri:	message (const void *):         Messaggio ricevuto
+ *              header (gbn_ftp_header *):      Puntatore ad un'area di memoria dove memorizzare l'intestazione
+ *              payload (void *):               Puntatore ad un'area di memoria dove memorizzare il payload
+ *              message_size (size_t):          Lunghezza del messaggio
+ *      
+ */
+static void get_segment(const void *message, gbn_ftp_header_t *header, void *payload, size_t message_size)
 {
         long unsigned header_size = sizeof(gbn_ftp_header_t);
         
@@ -129,6 +275,21 @@ static void get_segment(char *message, gbn_ftp_header_t *header, void *payload, 
                 memcpy(payload, (message + header_size), message_size - header_size);
 }
 
+
+/*
+ * funzione:    gbn_send
+ * 
+ * descrizione:	Funzione responsabile dell'invio di un segmento
+ *
+ * parametri:	socket (int):                                   Descrittore associato alla socket verso cui inviare il segmento
+ *              header (gbn_ftp_header):                        Intestazione del segmento da inviare
+ *              payload (const void *):                         Payload del segmento da inviare
+ *              payload_length (size_t):                        Lunghezza del payload
+ *              sockaddr_in (const struct sockaddr_in *):       Struttura contenente le informazioni del destinatario
+ *
+ * return:      Numero di byte inviati (ssize_t)
+ *      
+ */
 ssize_t gbn_send(int socket, gbn_ftp_header_t header, const void *payload, size_t payload_length, const struct sockaddr_in *sockaddr_in)
 {
         ssize_t send_size;
@@ -154,6 +315,20 @@ ssize_t gbn_send(int socket, gbn_ftp_header_t header, const void *payload, size_
         }
 }
 
+
+/*
+ * funzione:    gbn_receive
+ * 
+ * descrizione:	Funzione responsabile della ricezione di un segmento
+ *
+ * parametri:	socket (int):                                   Descrittore associato alla socket da cui ricevere il segmento
+ *              header (gbn_ftp_header *):                      Puntatore ad un'area di memoria dove salvare l'intestazione del segmento ricevuto
+ *              payload (const void *):                         Puntatore ad'un area di memoria dove salvare il payload del segmento ricevuto
+ *              sockaddr_in (const struct sockaddr_in *):       Puntatore ad una struttura dove salvare le informazioni del mittente
+ *
+ * return:      Numero di byte ricevuti (ssize_t)
+ *      
+ */
 ssize_t gbn_receive(int socket, gbn_ftp_header_t *header, void *payload, const struct sockaddr_in *sockaddr_in)
 {
         ssize_t received_size;

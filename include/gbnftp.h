@@ -1,11 +1,18 @@
+/*
+ * File..: gbnftp.h
+ * Autore: Simone Tiberi M.0252795
+ *
+ */
 #ifndef GBNFTP_H
 #define GBNFTP_H
 
+/* LIBRERIE STANDARD */
 #include <stdbool.h>
 #include <arpa/inet.h>
 #include <stdint.h>
 
-#define MAX_SEQ_NUMBER 134217727
+/* MACRO DI PRECOMPILAZIONE */
+#define MAX_SEQ_NUMBER 134217727 // 2^SEQ_NUM_SIZE - 1
 
 #define ZERO_MASK 0x0
 #define LIST_MASK 0x1
@@ -29,24 +36,26 @@
 #define ALPHA 0.125
 #define BETA 0.25
 
+
+/* STRUTTURE DATI */
 struct gbn_config {
-        uint32_t N;
-        long rto_usec;
-        bool is_adaptive;
+        unsigned int N;         /* Dimensione della finestra */
+        long rto_usec;          /* Timeout di ritrasmissione (per modalita' fixed) */
+        bool is_adaptive;       /* Flag booleano che settato a true indica la scelta di un timer adattativo */
 };
 
 struct gbn_adaptive_timeout {
-        struct timeval saved_tv;
-        unsigned int seq_num;
-        bool restart;
-        long sampleRTT;
-        long estimatedRTT;
-        long devRTT;
+        struct timeval saved_tv;        /* Istante di tempo in cui viene inviato il pacchetto per cui si deve stimare l'RTT */
+        unsigned int seq_num;           /* Numero di sequenza associato al pacchetto di cui si deve stimare l'RTT */
+        bool restart;                   /* Flag boolean che settato a true implica che e' possibile procedere con una nuova misurazione */
+        long sampleRTT;                 /* Stimatore SRTT ereditato dal protocollo TCP */
+        long estimatedRTT;              /* Stimatore ERTT ereditato dal protocollo TCP */ 
+        long devRTT;                    /* Stimatore DRTT ereditato dal protocollo TCP */
 };
 
 /* STRUTTURA DELL'HEADER DEL PROTOCOLLO
  * 4 BYTE (32 bit)
- * 27 bit dedicati al numero di sequenza (268435455 numeri possibili)
+ * 27 bit dedicati al numero di sequenza (134217727 numeri possibili)
  * 5 bit di flag cosi' organizzati:
  *      - err (1 bit)
  *      - ack (1 bit)
@@ -57,12 +66,22 @@ struct gbn_adaptive_timeout {
  *              10 -> PUT
  *              11 -> GET 
  */
-typedef unsigned int gbn_ftp_header_t;
+typedef uint32_t gbn_ftp_header_t;
 
+
+/* ENUMERAZIONI */
 enum message_type {ZERO, LIST, PUT, GET};
 
-enum connection_status {FREE, REQUEST, CONNECTED, TIMEOUT, QUIT};
+enum connection_status {
+        FREE,           /* Nessuna connessione attiva (idle) */
+        REQUEST,        /* Richiesta inviata (in attesa di ricevere una conferma) */
+        CONNECTED,      /* Ufficialmente connesso */ 
+        TIMEOUT,        /* Fase di ritrasmissione */
+        QUIT            /* Fase di terminazione della comunicazione */
+};
 
+
+/* PROTOTIPI */
 void set_sequence_number(gbn_ftp_header_t *header, unsigned int seq_no);
 unsigned int get_sequence_number(gbn_ftp_header_t header);
 void set_message_type(gbn_ftp_header_t *header, enum message_type type);
