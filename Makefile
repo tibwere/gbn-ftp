@@ -23,11 +23,11 @@ $(ODIR)/%.o: $(SDIR)/%.c $(DEPS)
 
 all: $(SERVER) $(CLIENT)
 
-$(SERVER): $(SOBJ) $(OBJ)
-	$(CC) -o $(BDIR)/$@ $^ $(CFLAGS) $(LIBS)
+server: $(SOBJ) $(OBJ)
+	$(CC) -o $(BDIR)/$(SERVER) $^ $(CFLAGS) $(LIBS)
 
-$(CLIENT): $(COBJ) $(OBJ)
-	$(CC) -o $(BDIR)/$@ $^ $(CFLAGS) $(LIBS)
+client: $(COBJ) $(OBJ)
+	$(CC) -o $(BDIR)/$(CLIENT) $^ $(CFLAGS) $(LIBS)
 
 .PHONY: clean
 
