@@ -854,7 +854,8 @@ void *sender_routine(void *args)
                                                                 perr(err_mess);
                                                                 return false;
                                                         } else {
-                                                                set_status_safe(&winfo[id].status, TIMEOUT, &winfo[id].mutex);
+                                                                if (get_status_safe(&winfo[id].status, &winfo[id].mutex) != QUIT)
+                                                                        set_status_safe(&winfo[id].status, TIMEOUT, &winfo[id].mutex);
                                                                 break;
                                                         }
 
@@ -935,11 +936,9 @@ void *sender_routine(void *args)
                 winfo[id].id_string,
                 winfo[id].last_rtt);
 
-        printf("{TEST} %s SEND TIME %ld usec (for %d/%ld B)\n", 
+        printf("{TEST} %s SEND TIME %ld usec\n", 
                 winfo[id].id_string,
-                elapsed_usec(&winfo[id].start_tx, &winfo[id].end_tx),
-                (winfo[id].next_seq_num - 1) * CHUNK_SIZE,
-                winfo[id].number_of_chunks * CHUNK_SIZE);
+                elapsed_usec(&winfo[id].start_tx, &winfo[id].end_tx));
         #endif
 
         pthread_exit(NULL);
@@ -1457,7 +1456,7 @@ bool handle_recv(int id)
 
                 #ifdef TEST
                 gettimeofday(&winfo[id].end_tx, NULL);
-                winfo[id].last_rtt = adapt[id].estimatedRTT + (4 * adapt[id].devRTT);
+                winfo[id].last_rtt = (config->is_adaptive) ? adapt[id].estimatedRTT + (4 * adapt[id].devRTT) : config->rto_usec;
                 #endif 
 
                 set_status_safe(&winfo[id].status, QUIT, &winfo[id].mutex);
@@ -1766,7 +1765,10 @@ int main(int argc, char **argv)
                 exit_server(EXIT_FAILURE);
         }
 
+        #ifndef TEST
         srand(time(0));
+        #endif
+
         concurrenty_connections = sysconf(_SC_NPROCESSORS_ONLN) << 2;
 
         if((config = init_configurations()) == NULL) {

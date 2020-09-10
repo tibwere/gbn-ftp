@@ -327,7 +327,8 @@ void *put_sender_routine(__attribute__((unused)) void *dummy)
                                                                 perr("{ERROR} [Sender Thread] Syncronization protocol for worker threads broken (worker_condvar)");
                                                                 return false;
                                                         } else {
-                                                                set_status_safe(&args->status, TIMEOUT, &args->mutex);
+                                                                if (get_status_safe(&args->status, &args->mutex) != QUIT)
+                                                                        set_status_safe(&args->status, TIMEOUT, &args->mutex);
                                                                 break;
                                                         }
 
@@ -1281,7 +1282,9 @@ int main(int argc, char **argv)
         if (!setup_signals(&t_set, sig_handler))
                 exit_client(EXIT_FAILURE);        
 
+        #ifndef TEST
         srand(time(0));
+        #endif
 
         memset(address_string, 0x0, ADDRESS_STRING_LENGTH);
         
