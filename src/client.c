@@ -1238,8 +1238,7 @@ bool load_header(void)
                 return false;
         }
 
-        
-        if ((fd = open(strncat(dirname(path), "/../header.txt", 15), O_RDONLY)) == -1) {
+        if ((fd = open(strncat(dirname(path), "/../txt/header.txt", 19), O_RDONLY)) == -1) {
                 perr("{ERROR} [Main Thread] Unable to load figlet header");
                 return false;
         }
