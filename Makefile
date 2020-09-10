@@ -21,7 +21,7 @@ CLIENT = gbn-ftp-client
 $(ODIR)/%.o: $(SDIR)/%.c $(DEPS)
 	$(CC) -c -o $@ $< $(CFLAGS)
 
-all: $(SERVER) $(CLIENT)
+all: server client
 
 server: $(SOBJ) $(OBJ)
 	$(CC) -o $(BDIR)/$(SERVER) $^ $(CFLAGS) $(LIBS)
