@@ -89,7 +89,7 @@ void sig_handler(int signo);
 #else
 void sig_handler(__attribute__((unused)) int signo);
 #endif 
-bool handle_retransmit(long id); 
+bool handle_retransmit(long id, int counter); 
 ssize_t send_file_chunk(long id);
 bool lg_send_new_port_mess(long id);
 bool p_send_new_port_mess(long id);
@@ -168,7 +168,7 @@ bool is_valid_port(unsigned short int port)
  *              false   altrimenti       
  *
  */
-bool handle_retransmit(long id) 
+bool handle_retransmit(long id, int counter) 
 {
         unsigned int base; 
         unsigned int next_seq_num;
@@ -189,8 +189,8 @@ bool handle_retransmit(long id)
         gettimeofday(&winfo[id].start_timer, NULL);
 
         if (config->is_adaptive) {
-                adapt[id].estimatedRTT = MIN(adapt[id].estimatedRTT * INC_RATE, MAX_ERTT_SCALE * config->rto_usec);
-                adapt[id].devRTT = MIN(adapt[id].devRTT * INC_RATE, MAX_DRTT_USEC);
+                adapt[id].estimatedRTT = MIN(adapt[id].estimatedRTT * (1L << counter), MAX_ERTT_SCALE * config->rto_usec);
+                adapt[id].devRTT = MIN(adapt[id].devRTT * (1L << counter), MAX_DRTT_USEC);
         }
 
         if (pthread_mutex_unlock(&winfo[id].mutex)) {
@@ -889,7 +889,7 @@ void *sender_routine(void *args)
                                 if (get_gbn_param_safe(&winfo[id].base, &winfo[id].mutex) == last_base_for_timeout) {
 
                                         if (timeout_counter < MAX_TO) {
-                                                if (!handle_retransmit(id))
+                                                if (!handle_retransmit(id, timeout_counter))
                                                         set_status_safe(&winfo[id].status, QUIT, &winfo[id].mutex);
                                         } else  {
                                                 printf("{INFO} %s Failed to serve request\n", winfo[id].id_string);
@@ -906,7 +906,7 @@ void *sender_routine(void *args)
 
                                         timeout_counter = 1;
                                         
-                                        if (!handle_retransmit(id))
+                                        if (!handle_retransmit(id, timeout_counter))
                                                 set_status_safe(&winfo[id].status, QUIT, &winfo[id].mutex);
 
                                         last_base_for_timeout = get_gbn_param_safe(&winfo[id].base, &winfo[id].mutex);

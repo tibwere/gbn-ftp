@@ -85,7 +85,7 @@ enum app_usages modality;
 void sig_handler(int signo); 
 void deserialize_configuration(struct gbn_config *config, char *ser);
 ssize_t send_file_chunk(void);
-bool handle_retransmit(void);
+bool handle_retransmit(int counter);
 void *put_sender_routine(void *dummy);
 void exit_client(int status); 
 enum app_usages parse_cmd(int argc, char **argv, char *address);
@@ -224,7 +224,7 @@ ssize_t send_file_chunk(void)
  *              false   altrimenti       
  *
  */
-bool handle_retransmit(void) 
+bool handle_retransmit(int counter) 
 {
         unsigned int base; 
         unsigned int next_seq_num;
@@ -241,8 +241,8 @@ bool handle_retransmit(void)
         gettimeofday(&args->start_timer, NULL);
         
         if (config->is_adaptive) {
-                adapt->estimatedRTT = MIN(adapt->estimatedRTT * INC_RATE, MAX_ERTT_SCALE * config->rto_usec);
-                adapt->devRTT = MIN(adapt->devRTT * INC_RATE, MAX_DRTT_USEC);
+                adapt->estimatedRTT = MIN(adapt->estimatedRTT * (1L << counter), MAX_ERTT_SCALE * config->rto_usec);
+                adapt->devRTT = MIN(adapt->devRTT * (1L << counter), MAX_DRTT_USEC);
         }
 
         if (pthread_mutex_unlock(&args->mutex)) {
@@ -358,7 +358,7 @@ void *put_sender_routine(__attribute__((unused)) void *dummy)
                                 if (get_gbn_param_safe(&args->base, &args->mutex) == last_base_for_timeout) {
 
                                         if (timeout_counter < MAX_TO) {
-                                                if (!handle_retransmit())
+                                                if (!handle_retransmit(timeout_counter))
                                                         set_status_safe(&args->status, QUIT, &args->mutex);
                                         } else  {
                                                 #ifdef DEBUG
@@ -373,7 +373,7 @@ void *put_sender_routine(__attribute__((unused)) void *dummy)
 
                                         timeout_counter = 1;
                                         
-                                        if (!handle_retransmit())
+                                        if (!handle_retransmit(timeout_counter))
                                                 set_status_safe(&args->status, QUIT, &args->mutex);
 
                                         last_base_for_timeout = get_gbn_param_safe(&args->base, &args->mutex);
