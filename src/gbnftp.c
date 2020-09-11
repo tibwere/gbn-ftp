@@ -18,7 +18,7 @@
 
 /* CONFIGURAZIONE DI DEFAULT */
 const struct gbn_config DEFAULT_GBN_CONFIG = {
-        8, 500, true
+        4, 500, true
 };
 
 /*

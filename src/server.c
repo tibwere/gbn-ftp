@@ -932,9 +932,11 @@ void *sender_routine(void *args)
                 config->N, 
                 elapsed_usec(&winfo[id].start_tx, &winfo[id].full_window));
 
-        printf("{TEST} %s LAST ADAPTIVE RTO EVALUATED = %ld usec\n",
-                winfo[id].id_string,
-                winfo[id].last_rtt);
+        if (config->is_adaptive) {
+                printf("{TEST} %s LAST ADAPTIVE RTO EVALUATED = %ld usec\n",
+                        winfo[id].id_string,
+                        winfo[id].last_rtt);
+        }
 
         printf("{TEST} %s SEND TIME %ld usec\n", 
                 winfo[id].id_string,
@@ -1056,8 +1058,7 @@ enum app_usages parse_cmd(int argc, char **argv)
                         case 'v':
                                 return (argc != 2) ? ERROR : VERSION;
                         default:
-                                fprintf(stderr, "Invalid condition at %s:%d\n", __FILE__, __LINE__);
-                                abort();
+                                return ERROR;
                 }
         }
 
@@ -1787,7 +1788,7 @@ int main(int argc, char **argv)
                                 printf("rcvtimeout.: %lu usec\n", config->rto_usec);
                                 printf("port.......: %u\n", acceptance_port);
                                 printf("adapitve...: %s\n", (config->is_adaptive) ? "true" : "false");
-                                printf("probability: %.2f\n", PROBABILITY);
+                                printf("probability: %f\n", PROBABILITY);
                                 printf("pool size..: %ld\n\n", concurrenty_connections);
                         }
  

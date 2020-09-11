@@ -468,13 +468,13 @@ enum app_usages parse_cmd(int argc, char **argv, char *address)
                         case 'v':
                                 return (argc != 2) ? ERROR : VERSION;
                         default:
-                                fprintf(stderr, "Invalid condition at %s:%d\n", __FILE__, __LINE__);
-                                abort();
+                                return ERROR;
                 }
         }
 
         return (valid_cmd) ? STANDARD : ERROR;
 }
+
 
 /*
  * funzione:	set_sockadrr_in
@@ -895,17 +895,11 @@ bool list(void)
         if (!lg_connect_loop(STDIN_FILENO, LIST, &status))
                 return false;
 
-        if (pthread_sigmask(SIG_BLOCK, &t_set, NULL))
-                return false;
+        close(sockfd);
 
         printf("\n\nPress any key to get back to menu ");
         fflush(stdout);
         getchar();
-
-        close(sockfd);
-
-        if (pthread_sigmask(SIG_UNBLOCK, &t_set, NULL))
-                return false;
 
         return true;
 }
@@ -972,18 +966,12 @@ bool get_file(void)
         if (!lg_connect_loop(fd, GET, &status))
                 return false;
 
-        if (pthread_sigmask(SIG_BLOCK, &t_set, NULL))
-                return false;
+        close(fd);
+        close(sockfd);
 
         printf("\n\nFile succesfully downloaded\nPress enter to get back to menu");
         fflush(stdout);
         getchar();
-
-        close(fd);
-        close(sockfd);
-
-        if (pthread_sigmask(SIG_UNBLOCK, &t_set, NULL))
-                return false;
 
         return true;
 }
@@ -1173,23 +1161,16 @@ bool put_file(void)
         if (!p_connect_loop())
                 return false;
 
-        if (pthread_sigmask(SIG_BLOCK, &t_set, NULL))
-                return false;
-
-        printf("\nFile succesfully uploaded\nPress enter to get back to menu\n");
-        getchar();
-
         pthread_join(args->tid, NULL);
+        dispose_put_args();
+        close(sockfd);
 
         #ifdef DEBUG
         printf("{DEBUG} [Main Thread] Joined sender thread\n");
         #endif
 
-        dispose_put_args();
-        close(sockfd);
-
-        if (pthread_sigmask(SIG_UNBLOCK, &t_set, NULL))
-                return false;
+        printf("\nFile succesfully uploaded\nPress enter to get back to menu\n");
+        getchar();
 
         return true;
 }
