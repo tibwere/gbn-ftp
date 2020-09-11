@@ -189,8 +189,8 @@ bool handle_retransmit(long id, int counter)
         gettimeofday(&winfo[id].start_timer, NULL);
 
         if (config->is_adaptive) {
-                adapt[id].estimatedRTT = MIN(adapt[id].estimatedRTT * (1L << counter), MAX_ERTT_SCALE * config->rto_usec);
-                adapt[id].devRTT = MIN(adapt[id].devRTT * (1L << counter), MAX_DRTT_USEC);
+                adapt[id].estimatedRTT = MIN(adapt[id].estimatedRTT * counter, MAX_ERTT_SCALE * config->rto_usec);
+                adapt[id].devRTT = MIN(adapt[id].devRTT * counter, MAX_DRTT_USEC);
         }
 
         if (pthread_mutex_unlock(&winfo[id].mutex)) {

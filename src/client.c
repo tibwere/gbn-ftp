@@ -241,8 +241,8 @@ bool handle_retransmit(int counter)
         gettimeofday(&args->start_timer, NULL);
         
         if (config->is_adaptive) {
-                adapt->estimatedRTT = MIN(adapt->estimatedRTT * (1L << counter), MAX_ERTT_SCALE * config->rto_usec);
-                adapt->devRTT = MIN(adapt->devRTT * (1L << counter), MAX_DRTT_USEC);
+                adapt->estimatedRTT = MIN(adapt->estimatedRTT * counter, MAX_ERTT_SCALE * config->rto_usec);
+                adapt->devRTT = MIN(adapt->devRTT * counter, MAX_DRTT_USEC);
         }
 
         if (pthread_mutex_unlock(&args->mutex)) {
