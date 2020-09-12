@@ -267,7 +267,7 @@ ssize_t send_file_chunk(long id)
                 set_sequence_number(&header, get_gbn_param_safe(&winfo[id].next_seq_num, &winfo[id].mutex));
                 set_ack(&header, false);      
                 set_err(&header, false);  
-                set_last(&header, (winfo[id].next_seq_num == winfo[id].number_of_chunks));  
+                set_last(&header, (get_gbn_param_safe(&winfo[id].next_seq_num, &winfo[id].mutex) == winfo[id].number_of_chunks));  
 
                 #ifdef TEST
                 if (get_gbn_param_safe(&winfo[id].next_seq_num, &winfo[id].mutex) == 1)
@@ -302,7 +302,7 @@ ssize_t send_file_chunk(long id)
                         gettimeofday(&winfo[id].start_timer, NULL);
 
                 #ifdef TEST
-                if (get_gbn_param_safe(&winfo[id].next_seq_num, &winfo[id].mutex) == config->N)
+                if (winfo[id].next_seq_num == config->N)
                         gettimeofday(&winfo[id].full_window, NULL);
                 #endif
 
