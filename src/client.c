@@ -951,9 +951,9 @@ bool get_file(void)
                                         perr("{ERROR} [Main Thread] Unable to create a local copy of remote file");
                                         return false;
                                 }
-                        }
-                        else
+                        } else {
                                 return true;
+                        }
                 }
         }          
 
