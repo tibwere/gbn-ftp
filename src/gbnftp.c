@@ -71,6 +71,7 @@ unsigned int get_sequence_number(gbn_ftp_header_t header)
  */
 void set_message_type(gbn_ftp_header_t *header, enum message_type type)
 {
+        // resetto i 2 bit del tipo
         *header >>= TYPE_SIZE;
         *header <<= TYPE_SIZE;
 
@@ -296,11 +297,12 @@ ssize_t gbn_send(int socket, gbn_ftp_header_t header, const void *payload, size_
         char *message; 
         size_t length = payload_length + sizeof(gbn_ftp_header_t);
         double rndval = (double) rand() / (double) RAND_MAX;
-        
-        if((message = make_segment(header, payload, payload_length)) == NULL) 
-                return -1;
 
         if (rndval > PROBABILITY) {
+
+                if((message = make_segment(header, payload, payload_length)) == NULL) 
+                        return -1;
+
                 if (sockaddr_in)
                         send_size = sendto(socket, message, length, MSG_NOSIGNAL, (struct sockaddr *) sockaddr_in, sizeof(struct sockaddr_in));
                 else
@@ -310,7 +312,6 @@ ssize_t gbn_send(int socket, gbn_ftp_header_t header, const void *payload, size_
                 return send_size;
                         
         } else {
-                free(message);
                 return 0;
         }
 }
