@@ -176,6 +176,7 @@ long elapsed_usec(const struct timeval *start, const struct timeval *stop)
 
         memset(&emptytv, 0x0, sizeof(struct timeval));
 
+        // se la struttura è azzerata implica che il timer è stato stoppato
         if (memcmp(start, &emptytv, sizeof(struct timeval)) == 0)
                 return -1;
 
@@ -208,11 +209,13 @@ bool setup_signals(sigset_t *thread_mask , void (*sig_handler)(int))
         act.sa_flags = 0;
 	act.sa_handler = sig_handler;
 
+        // nel momento in cui viene gestito un segnale tutti gli altri segnali devono essere bloccati
         if (sigfillset(&act.sa_mask) == -1) {
 		perr("{ERROR} [Main Thread] failed to initialize signal mask for main thread");
 		return false;                
         }
 
+        // impostato l'handler per i segnali di job control
 	while (sigaction(SIGINT, &act, NULL) == -1) {
 		if (errno != EINTR) {
 			perr("{ERROR} [Main Thread] Unable to initialize signal management for main thread (SIGINT)");
@@ -241,8 +244,8 @@ bool setup_signals(sigset_t *thread_mask , void (*sig_handler)(int))
 		}
 	}	
 	
+        // ignorato esplicitamente il SIGPIPE
 	act.sa_handler = SIG_IGN;
-	
 	while (sigaction(SIGPIPE, &act, NULL) == -1) {
 		if (errno != EINTR) {
 			perr("{ERROR} [Main Thread] Unable to set to ignore SIGPIPE");
@@ -250,6 +253,7 @@ bool setup_signals(sigset_t *thread_mask , void (*sig_handler)(int))
 		}
 	}
 
+        // aggiunti i segnali di job control alla maschera da bloccare per i thread
 	if (sigemptyset(thread_mask) == -1) {
 		perr("{ERROR} [Main Thread] failed to initialize signal mask for worker thread");
 		return false;
