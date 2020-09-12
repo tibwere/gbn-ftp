@@ -1133,10 +1133,12 @@ bool put_file(void)
                                 printf("Selected file does not exists\n");
                                 choice = multi_choice("Do you want to retry?", "yn", 2);
 
-                                if (choice == 'Y')
+                                if (choice == 'Y') {
                                         continue;
-                                else
-                                        return false;
+                                } else {
+                                        dispose_put_args();
+                                        return true;
+                                }
 
                         }
                         perr("{ERROR} [Main Thread] Unable to open chosen file");
