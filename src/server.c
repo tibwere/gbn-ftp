@@ -511,9 +511,8 @@ ssize_t p_send_ack(long id, unsigned int seq_num, bool is_last)
         set_err(&header, false);
         set_message_type(&header, PUT);
 
-        memset(error_message, 0x0, ERR_SIZE);
-
         if ((wsize = gbn_send(winfo[id].socket, header, NULL, 0, &winfo[id].client_sockaddr)) == -1) {
+                memset(error_message, 0x0, ERR_SIZE);
                 snprintf(error_message, ERR_SIZE, "{ERROR} %s Unable to send ACK %d", winfo[id].id_string, seq_num);
                 perr(error_message);
                 return -1;
