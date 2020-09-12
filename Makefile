@@ -1,5 +1,8 @@
 # N.B. ESECUZIONE CON VALGRIND
 # valgrind --leak-check=full --track-origins=yes --show-leak-kinds=all ./<prog> <options>
+#
+# l'esecuzione con valgrind rende in media l'applicazione 10 volte più lenta per cui
+# in tal caso è consigliato aumentare i parametri all'interno della struct di default
 
 IDIR = ./include
 CC = gcc
