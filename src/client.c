@@ -1159,12 +1159,14 @@ bool put_file(void)
         can_connect = true;
         if (!p_request_loop(args->fd, (filename_size) ? filename : basename(path), &args->status, &already_exists, &can_connect)) {
                 if (!can_connect) {
+                        dispose_put_args();
                         printf("\nServer is busy...\nPlease press enter key to get back to menu and try again later\n");
                         getchar();
                         return true;
                 }
 
                 if (already_exists) {
+                        dispose_put_args();
                         printf("Selected file already exists on server\nPress enter to get back to menu ");
                         getchar();
                         return true;
