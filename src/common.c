@@ -50,7 +50,6 @@ void detailed_perror(const char *message, const char *filename, int line_num)
         }
 }
 
-
 /*
  * funzione:    get_input
  * 
@@ -60,7 +59,7 @@ void detailed_perror(const char *message, const char *filename, int line_num)
  *              string (char *):        Buffer in cui memorizzare i dati letti
  *              not_null (bool):        Flag booleano per discriminare se la stringa onserita può o meno essere vuota     
  *
- * return:	Numero di byte letti (ssize_t)       
+ * return:	Numero di byte letti (size_t)       
  *
  */
 size_t get_input(unsigned int length, char *string, bool not_null)
@@ -92,7 +91,6 @@ size_t get_input(unsigned int length, char *string, bool not_null)
         
         return i;
 }
-
 
 /*
  * funzione:    multi_choice
@@ -134,14 +132,13 @@ char multi_choice(const char *question, const char *choices, int no_choices)
     }
 }
 
-
 /*
  * funzione:    init_configurations
  * 
  * descrizione:	Funzione responsabile dell'allocazione dinamica di una struct gbn_config 
  *              e dell'impostazione dei suoi parametri
  *
- * return:	La struct creata (struct gbn_config *)
+ * return:	Il puntatore all'area di memoria allocata e configurata (struct gbn_config *)
  *
  */
 struct gbn_config *init_configurations(void) 
@@ -155,7 +152,6 @@ struct gbn_config *init_configurations(void)
 
         return cfg;
 }
-
 
 /*
  * funzione:    elapsed_usec
@@ -185,7 +181,6 @@ long elapsed_usec(const struct timeval *start, const struct timeval *stop)
 
         return sec * 1000000 + usec; 
 }
-
 
 /*
  * funzione:    setup_signals
@@ -282,7 +277,6 @@ bool setup_signals(sigset_t *thread_mask , void (*sig_handler)(int))
         return true;			
 }
 
-
 /*
  * funzione:    get_status_safe
  * 
@@ -306,7 +300,6 @@ enum connection_status get_status_safe(volatile enum connection_status *status, 
         return s;
 }
 
-
 /*
  * funzione:    set_status_safe
  * 
@@ -325,11 +318,10 @@ void set_status_safe(volatile enum connection_status *old_status, enum connectio
         pthread_mutex_unlock(mutex);
 }
 
-
 /*
  * funzione:    get_gbn_param_safe
  * 
- * descrizione:	Funzione che effettua il retrive dello valore di un parametro di configurazione
+ * descrizione:	Funzione che effettua il retrive del valore di un parametro di configurazione
  *              in modo atomico tramite sezione critica
  *
  * parametri:	param (volatile unsigned int *):        Puntatore ad uno paramtro
@@ -349,7 +341,6 @@ unsigned int get_gbn_param_safe(volatile unsigned int *param, pthread_mutex_t *m
         return p;
 }
 
-
 /*
  * funzione:    set_gbn_param_safe
  * 
@@ -367,7 +358,6 @@ void set_gbn_param_safe(volatile unsigned int *old_param, unsigned int new_param
         *old_param = new_param;
         pthread_mutex_unlock(mutex);
 }
-
 
 /*
  * funzione:    can_send_more_segment_safe
@@ -395,7 +385,6 @@ bool can_send_more_segment_safe(volatile unsigned int *base, volatile unsigned i
         return retval;
 }
 
-
 /*
  * funzione:    get_adaptive_rto_safe
  * 
@@ -404,7 +393,7 @@ bool can_send_more_segment_safe(volatile unsigned int *base, volatile unsigned i
  * parametri:	adapt (gbn_adaptive_timeout *): Puntatore ad una struct per la gestione del timer adattativo
  *              mutex (pthread_mutex_t *):      Mutex utilizzato per la sezione critica
  *
- * return:	Valore corrente del recv_to (long) 
+ * return:	Valore corrente del recv_to adattativo (long) 
  *
  */
 long get_adaptive_rto_safe(struct gbn_adaptive_timeout *adapt, pthread_mutex_t *mutex)

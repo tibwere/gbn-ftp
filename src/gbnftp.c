@@ -43,7 +43,6 @@ void set_sequence_number(gbn_ftp_header_t *header, unsigned int seq_no)
         *header = seq | flags;
 }
 
-
 /*
  * funzione:    get_sequence_number
  * 
@@ -58,7 +57,6 @@ unsigned int get_sequence_number(gbn_ftp_header_t header)
 {
         return header >> BITMASK_SIZE;
 }
-
 
 /*
  * funzione:    set_message_type
@@ -86,13 +84,12 @@ void set_message_type(gbn_ftp_header_t *header, enum message_type type)
         }
 }
 
-
 /*
  * funzione:    get_message_type
  * 
  * descrizione:	Funzione che permette di effettuare il retrive del tipo di messaggio da un header
  *
- * parametri:	header (gbn_ftp_header):        Intestazione da cui si vuole prelevare il numero di sequenza
+ * parametri:	header (gbn_ftp_header):        Intestazione da cui si vuole prelevare il tipo di messaggio
  *
  * return:      Tipo di messaggio associato all'intestazione (enum message_type)
  *      
@@ -110,7 +107,6 @@ enum message_type get_message_type(gbn_ftp_header_t header)
         else   
                 return ZERO;
 }
-
 
 /*
  * funzione:    set_last
@@ -130,7 +126,6 @@ void set_last(gbn_ftp_header_t *header, bool is_last)
                 *header &= ~LAST_MASK;
 }
 
-
 /*
  * funzione:    is_last
  * 
@@ -146,7 +141,6 @@ bool is_last(gbn_ftp_header_t header)
 {
         return ((header & LAST_MASK) == LAST_MASK) ? true : false;
 }
-
 
 /*
  * funzione:    set_ack
@@ -167,7 +161,6 @@ void set_ack(gbn_ftp_header_t *header, bool is_ack)
         
 }
 
-
 /*
  * funzione:    is_ack
  * 
@@ -183,7 +176,6 @@ bool is_ack(gbn_ftp_header_t header)
 {
         return ((header & ACK_MASK) == ACK_MASK) ? true : false;
 }
-
 
 /*
  * funzione:    set_err
@@ -204,7 +196,6 @@ void set_err(gbn_ftp_header_t *header, bool is_err)
         
 }
 
-
 /*
  * funzione:    is_err
  * 
@@ -221,12 +212,11 @@ bool is_err(gbn_ftp_header_t header)
         return ((header & ERR_MASK) == ERR_MASK) ? true : false;
 }
 
-
 /*
  * funzione:    make_segment
  * 
- * descrizione:	Funzione responsabile dell'allocazione dinamica di un buffer in cui memorizza
- *              la concatenazione di header e payload
+ * descrizione:	Funzione responsabile dell'allocazione dinamica di un buffer in cui viene 
+ *              memorizzata la concatenazione di header e payload
  *
  * parametri:	header (gbn_ftp_header):        Intestazione del segmento
  *              payload (const void *):         Payload del segmento
@@ -249,7 +239,6 @@ static char * make_segment(gbn_ftp_header_t header, const void *payload, size_t 
 
         return message;
 }
-
 
 /*
  * funzione:    get_segment
@@ -275,7 +264,6 @@ static void get_segment(const void *message, gbn_ftp_header_t *header, void *pay
         if (payload != NULL)
                 memcpy(payload, (message + header_size), message_size - header_size);
 }
-
 
 /*
  * funzione:    gbn_send
@@ -315,7 +303,6 @@ ssize_t gbn_send(int socket, gbn_ftp_header_t header, const void *payload, size_
                 return 0;
         }
 }
-
 
 /*
  * funzione:    gbn_receive

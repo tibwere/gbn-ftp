@@ -144,7 +144,6 @@ void deserialize_configuration(struct gbn_config *config, char *ser)
         return;
 }
 
-
 /*
  * funzione:	send_file_chunk
  * 
@@ -221,6 +220,8 @@ ssize_t send_file_chunk(void)
  * descrizione:	Funzione responsabile dell'invio dell'intera finestra a seguito della scadenza di un timeout
  *              n.b.    Implementa la funzionalità timeout dell'automa sender GBN
  *
+ * parametri:   counter (int):  Numero di timeout scaduti consecutivamente per la medesima base
+ *
  * return:	true    nel caso in cui non vi sono errori
  *              false   altrimenti       
  *
@@ -277,7 +278,7 @@ void *put_sender_routine(__attribute__((unused)) void *dummy)
         struct timeval tv;
         struct timespec ts;
         unsigned short timeout_counter = 0;
-        unsigned int last_base_for_timeout = get_gbn_param_safe(&args->base, &args->mutex);
+        unsigned int last_base_for_timeout = 0;
 
         if (pthread_sigmask(SIG_BLOCK, &t_set, NULL)) {
                 perr("{ERROR} [Sender Thread] Unable to set sigmask for worker thread");
@@ -479,7 +480,6 @@ enum app_usages parse_cmd(int argc, char **argv, char *address)
         return (valid_cmd) ? STANDARD : ERROR;
 }
 
-
 /*
  * funzione:	set_sockadrr_in
  * 
@@ -510,7 +510,7 @@ bool set_sockadrr_in(struct sockaddr_in *server_sockaddr, const char *address_st
 /*
  * funzione:	send_request
  * 
- * descrizione:	Funzione responsabile dell'invio di un segmento di requesat per la prima fase della connessione a 3 vie
+ * descrizione:	Funzione responsabile dell'invio di un segmento di request per la prima fase della connessione a 3 vie
  * 
  * parametri:   type (enum message_type):       Tipo di richiesta da inoltrare
  *              filename (const char *):        Nome del file da inviare/ricevere (NULL nel caso di richiesta LIST)      
@@ -1054,7 +1054,7 @@ bool init_put_args(void)
 }
 
 /*
- * funzione:	init_put_args
+ * funzione:	dispose_put_args
  * 
  * descrizione:	Funzione responsabile della deallocazione delle aree di memoria allocate per la richiesta PUT
  *
@@ -1124,9 +1124,24 @@ bool put_file(void)
                 fflush(stdout);
                 get_input(PATH_SIZE, path, true);
 
+get_filename:
                 printf("Choose the name for the upload (default: %s)? ", basename(path));
                 fflush(stdout);
                 filename_size = get_input(CHUNK_SIZE, filename, false);
+
+                if (filename_size > 0) {
+                        if (filename[0] == '.') {
+                                printf("File cannot start by '.'\nPlease press enter and retry\n");
+                                getchar();
+                                goto get_filename;
+                        }
+                } else {
+                        if (basename(path)[0] == '.') {
+                                printf("File cannot start by '.'\nPlease press enter and retry\n");
+                                getchar();
+                                goto get_filename;
+                        }
+                }
 
                 if((args->fd = open(path, O_RDONLY)) == -1) {
                         if (errno == ENOENT) {

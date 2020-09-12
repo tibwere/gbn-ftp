@@ -135,7 +135,6 @@ void sig_handler(__attribute__((unused)) int signo)
         exit_server(EXIT_SUCCESS);
 }
 
-
 /*
  * funzione:	is_valid_port
  * 
@@ -155,7 +154,6 @@ bool is_valid_port(unsigned short int port)
         return check_for_std_range && check_for_wrk_range; 
 }
 
-
 /*
  * funzione:	handle_retransmit
  * 
@@ -164,6 +162,7 @@ bool is_valid_port(unsigned short int port)
  *
  * parametri:   id (long):      Indice del worker per ottenere le informazioni necessarie
  *                              dall'array globale winfo
+ *              counter (int):  Numero di timeout scaduti consecutivamente per la medesima base
  *
  * return:	true    nel caso in cui non vi sono errori
  *              false   altrimenti       
@@ -208,7 +207,6 @@ bool handle_retransmit(long id, int counter)
 
         return true;
 }
-
 
 /*
  * funzione:	send_file_chunk
@@ -320,7 +318,6 @@ ssize_t send_file_chunk(long id)
         return 0;    
 }
 
-
 /*
  * funzione:	lg_send_new_port_mess
  * 
@@ -405,7 +402,6 @@ bool lg_send_new_port_mess(long id)
         return true;
 }
 
-
 /*
  * funzione:	p_send_new_port_mess
  * 
@@ -484,7 +480,6 @@ bool p_send_new_port_mess(long id)
         return true;
 }
 
-
 /*
  * funzione:	p_send_ack
  * 
@@ -524,7 +519,6 @@ ssize_t p_send_ack(long id, unsigned int seq_num, bool is_last)
         
         return wsize;
 }
-
 
 /*
  * funzione:	update_tmp_ls_file
@@ -577,7 +571,6 @@ bool update_tmp_ls_file(int id)
         
         return true;
 }
-
 
 /*
  * funzione:	handle_ack_messages
@@ -669,7 +662,6 @@ bool handle_ack_messages(long id)
         return true;
 }
 
-
 /*
  * funzione:	set_id_string
  * 
@@ -691,13 +683,13 @@ void set_id_string(long id)
                 case GET: snprintf(modality_str, 5, "GET"); break;
                 default: snprintf(modality_str, 5, "ZERO"); break;
         }
+        
         snprintf(winfo[id].id_string, ID_STR_LENGTH, "[Worker no. %ld - Client connected: %s:%d (OP: %s)]", 
-        id, 
-        inet_ntoa((winfo[id].client_sockaddr).sin_addr), 
-        ntohs((winfo[id].client_sockaddr).sin_port),
-        modality_str);
+                id, 
+                inet_ntoa((winfo[id].client_sockaddr).sin_addr), 
+                ntohs((winfo[id].client_sockaddr).sin_port),
+                modality_str);
 }
-
 
 /*
  * funzione:	receiver_routine
@@ -771,7 +763,6 @@ void *receiver_routine(void *args)
         pthread_exit(NULL);
 }
 
-
 /*
  * funzione:	sender_routine
  * 
@@ -791,7 +782,7 @@ void *sender_routine(void *args)
         struct timespec ts;
         char err_mess[ERR_SIZE];
         unsigned short timeout_counter = 0;
-        unsigned int last_base_for_timeout = get_gbn_param_safe(&winfo[id].base, &winfo[id].mutex);
+        unsigned int last_base_for_timeout = 0;
 
         if (pthread_sigmask(SIG_BLOCK, &t_set, NULL)) {
                 snprintf(err_mess, ERR_SIZE, "{ERROR} %s Unable to set sigmask for worker thread", winfo[id].id_string);
@@ -947,7 +938,6 @@ void *sender_routine(void *args)
         pthread_exit(NULL);
 }
 
-
 /*
  * funzione:	exit_server
  * 
@@ -997,7 +987,6 @@ void exit_server(int status)
         exit(status);
 }
 
-
 /*
  * funzione:	parse_cmd
  * 
@@ -1035,12 +1024,12 @@ enum app_usages parse_cmd(int argc, char **argv)
                                 break;
                         case 'N':
                                 config->N = strtol(optarg, NULL, 10);
-                                if (!(config->N < MAX_SEQ_NUMBER / 2 && config->N > 0))
+                                if (!(config->N < MAX_SEQ_NUMBER && config->N > 0))
                                         return ERROR;
                                 break;
                         case 't':
                                 config->rto_usec = strtol(optarg, NULL, 10);
-                                if (config->rto_usec < 1)
+                                if (config->rto_usec <= 0)
                                         return ERROR;
                                 break;
                         case 'f':
@@ -1065,7 +1054,6 @@ enum app_usages parse_cmd(int argc, char **argv)
 
         return STANDARD;
 }
-
 
 /*
  * funzione:	init_socket
@@ -1110,7 +1098,6 @@ int init_socket(unsigned short int port)
         return fd;
 }
 
-
 /*
  * funzione:	get_available_worker
  * 
@@ -1154,7 +1141,6 @@ long get_available_worker(const struct sockaddr_in *addr, bool *already_handled_
 
         return ret;
 }
-
 
 /*
  * funzione:	start_sender
@@ -1222,7 +1208,6 @@ bool start_sender(long index, struct sockaddr_in *client_sockaddr, enum message_
         return true;
 }
 
-
 /*
  * funzione:	start_receiver
  * 
@@ -1273,7 +1258,6 @@ bool start_receiver(long index, struct sockaddr_in *client_sockaddr, const char 
 
         return true;
 }
-
 
 /*
  * funzione:	reset_worker_info
@@ -1359,7 +1343,6 @@ bool reset_worker_info(int id, bool need_destroy, bool need_create)
         return true;
 }
 
-
 /*
  * funzione:	init_worker_info
  * 
@@ -1399,7 +1382,6 @@ bool init_worker_info(void)
 
         return true;
 }
-
 
 /*
  * funzione:	handle_recv
@@ -1510,7 +1492,6 @@ bool handle_recv(int id)
         return true;
 }
 
-
 /*
  * funzione:	send_error_message
  * 
@@ -1552,7 +1533,6 @@ bool send_error_message(int id)
         return true;
 }
 
-
 /*
  * funzione:	dispose_leaked_resources
  * 
@@ -1579,7 +1559,6 @@ bool dispose_leaked_resources(void)
 
         return true;
 }
-
 
 /*
  * funzione:	acceptance_loop
@@ -1707,7 +1686,6 @@ bool acceptance_loop(void)
         return true;
 }
 
-
 /*
  * funzione:	check_installation
  * 
@@ -1729,7 +1707,6 @@ bool check_installation(void)
         else   
                 return false;
 }
-
 
 /*
  * funzione:	main
