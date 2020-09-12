@@ -36,6 +36,7 @@
 #define HEADER_FILE_LENGTH 241
 
 #ifndef DEBUG
+        /* sequenza speciale che permette di pulire lo schermo */
         #define cls() printf("\033[2J\033[H")
 #else   
         #define cls() 
@@ -59,7 +60,7 @@ struct put_args {
         enum connection_status status;          /* Stato della connessione {FREE, REQUEST, CONNECTED, TIMEOUT, QUIT} */
         struct timeval start_timer;             /* Struttura utilizzata per la gestione del timer */
         pthread_t tid;                          /* ID del thread servente */
-        long number_of_chunks;
+        long number_of_chunks;                  /* Numero totale di chunk da inviare */
 };
 
 
@@ -254,7 +255,8 @@ bool handle_retransmit(int counter)
                 if (send_file_chunk() == -1)
                         return false;
 
-        set_status_safe(&args->status, CONNECTED, &args->mutex);
+        if (get_status_safe(&args->status, &args->mutex) != QUIT)
+                set_status_safe(&args->status, CONNECTED, &args->mutex);
 
         return true;
 }
@@ -408,9 +410,11 @@ void exit_client(int status)
 
         if (config) {
                 if (config->is_adaptive) {
-                        if (adapt)
+                        if (adapt) {
                                 free(adapt);
+                        }
                 }
+
                 free(config);
         }
 
@@ -921,6 +925,7 @@ bool get_file(void)
         char path[PATH_SIZE];
         bool delete_file = false;
         bool can_connect;
+        char choice;
 
         status = REQUEST;
 
@@ -934,10 +939,23 @@ bool get_file(void)
 
         snprintf(path, PATH_SIZE, "/home/%s/.gbn-ftp-download/%s", getenv("USER"), filename);
 
-        if((fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) == -1) {
-                perr("{ERROR} [Main Thread] Unable to create a local copy of remote file");
-                return false;
-        } 
+        if((fd = open(path, O_CREAT | O_EXCL | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) == -1) {
+                if (errno != EEXIST) {
+                        perr("{ERROR} [Main Thread] Unable to create a local copy of remote file");
+                        return false;
+                } else {
+                        choice = multi_choice("Do you want to overwrite existing file?", "yn", 2);
+
+                        if (choice == 'Y') {
+                                if((fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) == -1) {
+                                        perr("{ERROR} [Main Thread] Unable to create a local copy of remote file");
+                                        return false;
+                                }
+                        }
+                        else
+                                return true;
+                }
+        }          
 
         if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
                 perr("{ERROR} [Main Thread] Unable to get socket file descriptor (REQUEST)");

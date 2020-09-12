@@ -35,24 +35,24 @@
 
 /* STRUTTURE DATI */
 struct worker_info {
-        int socket;                                     /* socket dedicata per la comunicazione */
-        char id_string[ID_STR_LENGTH];                  /* stringa identificativa del thread utile nelle stampe di debug */
-        unsigned short port;                            /* porta associata al thread worker */
-        volatile enum connection_status status;         /* stato della connessione {FREE, REQUEST, CONNECTED, TIMEOUT, QUIT} */
-        struct sockaddr_in client_sockaddr;             /* struttura sockaddr_in del client utilizzata nelle funzioni di send e receive */
-        pthread_mutex_t mutex;                          /* mutex utilizzato per la sincronizzazione fra main thread e servente i-esimo */
-        pthread_mutex_t cond_mutex;                     /* mutex utilizzato come guardia per la variabile condizionale */
-        pthread_cond_t cond_var;                        /* variabile condizionale utilizzata in un timed_wait nella fase di connessione */
-        enum message_type modality;                     /* modalità scelta d'utilizzo */
-        char filename[CHUNK_SIZE];                      /* nome del file su cui lavorare */
-        volatile unsigned int base;                     /* variabile base del protocollo gbn associata alla connessione */
+        int socket;                                     /* Socket dedicata per la comunicazione */
+        char id_string[ID_STR_LENGTH];                  /* Stringa identificativa del thread utile nelle stampe di debug */
+        unsigned short port;                            /* Porta associata al thread worker */
+        volatile enum connection_status status;         /* Stato della connessione {FREE, REQUEST, CONNECTED, TIMEOUT, QUIT} */
+        struct sockaddr_in client_sockaddr;             /* Struttura sockaddr_in del client utilizzata nelle funzioni di send e receive */
+        pthread_mutex_t mutex;                          /* Mutex utilizzato per la sincronizzazione fra main thread e servente i-esimo */
+        pthread_mutex_t cond_mutex;                     /* Mutex utilizzato come guardia per la variabile condizionale */
+        pthread_cond_t cond_var;                        /* Variabile condizionale utilizzata in un timed_wait nella fase di connessione */
+        enum message_type modality;                     /* Modalità scelta d'utilizzo */
+        char filename[CHUNK_SIZE];                      /* Nome del file su cui lavorare */
+        volatile unsigned int base;                     /* Variabile base del protocollo gbn associata alla connessione */
         volatile unsigned int next_seq_num;             /* variabile next_seq_num del protocollo gbn associata alla connessione */                 
         unsigned int expected_seq_num;                  /* variabile expected_seq_num del protocollo gbn associata alla connessione */
         unsigned int last_acked_seq_num;                /* variabile last_acked_seq_num del protocollo gbn associata alla connessione */
-        struct timeval start_timer;                     /* struttura utilizzata per la gestione del timer */
+        struct timeval start_timer;                     /* Struttura utilizzata per la gestione del timer */
         pthread_t tid;                                  /* ID del thread servente*/
-        int fd;                                         /* descrittore del file su cui si deve operare */ 
-        long number_of_chunks;                          /* numero totale di chunk da inviare */
+        int fd;                                         /* Descrittore del file su cui si deve operare */ 
+        long number_of_chunks;                          /* Numero totale di chunk da inviare */
 
         #ifdef TEST
         struct timeval first_ack;                       /* Istante di tempo in cui si riceve il primo ACK */
@@ -202,7 +202,8 @@ bool handle_retransmit(long id, int counter)
                 if (send_file_chunk(id) == -1)
                         return false;
 
-        set_status_safe(&winfo[id].status, CONNECTED, &winfo[id].mutex);
+        if (get_status_safe(&winfo[id].status, &winfo[id].mutex) != QUIT)
+                set_status_safe(&winfo[id].status, CONNECTED, &winfo[id].mutex);
 
         return true;
 }
