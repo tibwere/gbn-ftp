@@ -33,6 +33,7 @@
 #define START_WORKER_PORT 49152
 #define MAX_PORT_NUM 65535
 
+
 /* STRUTTURE DATI */
 struct worker_info {
         int socket;                                     /* Socket dedicata per la comunicazione */
@@ -269,7 +270,7 @@ ssize_t send_file_chunk(long id)
                 set_last(&header, (winfo[id].next_seq_num == winfo[id].number_of_chunks));  
 
                 #ifdef TEST
-                if (winfo[id].next_seq_num == 1)
+                if (get_gbn_param_safe(&winfo[id].next_seq_num, &winfo[id].mutex) == 1)
                         gettimeofday(&winfo[id].start_tx, NULL);
                 #endif
 
@@ -301,7 +302,7 @@ ssize_t send_file_chunk(long id)
                         gettimeofday(&winfo[id].start_timer, NULL);
 
                 #ifdef TEST
-                if (winfo[id].next_seq_num == config->N)
+                if (get_gbn_param_safe(&winfo[id].next_seq_num, &winfo[id].mutex) == config->N)
                         gettimeofday(&winfo[id].full_window, NULL);
                 #endif
 
