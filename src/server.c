@@ -54,6 +54,7 @@ struct worker_info {
         pthread_t tid;                                  /* ID del thread servente*/
         int fd;                                         /* Descrittore del file su cui si deve operare */ 
         long number_of_chunks;                          /* Numero totale di chunk da inviare */
+        bool to_be_deleted;
 
         #ifdef TEST
         struct timeval first_ack;                       /* Istante di tempo in cui si riceve il primo ACK */
@@ -646,6 +647,8 @@ bool handle_ack_messages(long id)
                                         if (!update_tmp_ls_file(id))
                                                 return false;
 
+                                        winfo[id].to_be_deleted = false;
+
                                         set_status_safe(&winfo[id].status, QUIT, &winfo[id].mutex);
                                 }
 
@@ -944,6 +947,10 @@ void *sender_routine(void *args)
  */
 void exit_server(int status) 
 {
+        char path[PATH_SIZE];
+
+        memset(path, 0x0, PATH_SIZE);
+
         if (winfo) {
                 for (int i = 0; i < concurrenty_connections; ++i) {
                         if (get_status_safe(&winfo[i].status, &winfo[i].mutex) != FREE)
@@ -952,8 +959,14 @@ void exit_server(int status)
 
                 for (int i = 0; i < concurrenty_connections; ++i) {
                         if (get_status_safe(&winfo[i].status, &winfo[i].mutex) != FREE) {                               
-                                if (winfo[i].tid)
+                                if (winfo[i].tid) {
                                         pthread_join(winfo[i].tid, NULL);
+
+                                        if (winfo[i].modality == PUT && winfo[i].to_be_deleted) {
+                                                snprintf(path, PATH_SIZE, "/home/%s/.gbn-ftp-public/%s", getenv("USER"), winfo[i].filename);
+                                                remove(path);
+                                        }
+                                }
                         }
 
                         reset_worker_info(i, true, false);
@@ -1326,6 +1339,7 @@ bool reset_worker_info(int id, bool need_destroy, bool need_create)
                 winfo[id].last_acked_seq_num = 0;
                 winfo[id].modality = ZERO;
                 winfo[id].status = FREE;
+                winfo[id].to_be_deleted = true;
 
                 if (config->is_adaptive) {
                         adapt[id].seq_num = 1;

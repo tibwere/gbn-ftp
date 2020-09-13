@@ -177,7 +177,8 @@ ssize_t send_file_chunk(void)
                 set_last(&header, (args->next_seq_num == args->number_of_chunks));   
 
                 if ((wsize = gbn_send(sockfd, header, buff, rsize, NULL)) == -1) {
-                        perr("{ERROR} [Sender Thread] Unable to send chunk to server");
+                        if (errno != ECONNREFUSED)
+                                perr("{ERROR} [Sender Thread] Unable to send chunk to server");
                         return -1;
                 }
 
@@ -407,6 +408,11 @@ void *put_sender_routine(__attribute__((unused)) void *dummy)
  */
 void exit_client(int status) 
 {
+        if (args) {
+                set_status_safe(&args->status, QUIT, &args->mutex);
+                pthread_join(args->tid, NULL);
+        }
+
         dispose_put_args();
 
         if (config) {
@@ -735,6 +741,11 @@ bool lg_connect_loop(int writefd, enum message_type type, enum connection_status
                 if (retval) {
 
                         if((recv_size = gbn_receive(sockfd, &recv_header, payload, NULL)) == -1) {
+                                if (errno == ECONNREFUSED) {
+                                        printf("Connection with server lost\n");
+                                        return false;
+                                }
+                                
                                 perr("{ERROR} [Main Thread] Unable to receive pkt from server (gbn_receive)");
                                 return false;
                         }
@@ -799,6 +810,11 @@ bool p_connect_loop(void)
         while (args->status != QUIT) {
 
                 if (gbn_receive(sockfd, &recv_header, NULL, NULL) == -1) {
+                        if (errno == ECONNREFUSED) {
+                                printf("Connection with server lost\n");
+                                return false;
+                        }
+                        
                         perr("{ERROR} [Main Thread] Unable to get ACK message from server");
                         return false;
                 }
