@@ -1,4 +1,10 @@
 #!/bin/sh
+
+# File..: test.sh
+# Autore: Simone Tiberi (M. 0252795)
+#
+# Script d'installazione del server
+
 GBN_FOLDER_PATH="${HOME}/.gbn-ftp-public/";
 TMP_LS_FILE="${HOME}/.gbn-ftp-public/.tmp-ls";
 README_FILE="${HOME}/.gbn-ftp-public/README.txt";

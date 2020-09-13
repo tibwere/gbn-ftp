@@ -1,4 +1,10 @@
 #!/bin/sh
+
+# File..: test.sh
+# Autore: Simone Tiberi (M. 0252795)
+#
+# Script d'installazione del client
+
 GBN_FOLDER_PATH="${HOME}/.gbn-ftp-download/"
 
 if [ -d $GBN_FOLDER_PATH ]
