@@ -18,6 +18,7 @@ do
         echo "Downloading $f ..."
         $PWD/../bin/gbn-ftp-client -a 127.0.0.1 --verbose < input.txt  > /dev/null 2>&1
 done
+
 rm -f input.txt
 echo -e "\nAll files downloaded succesfully!"
 
