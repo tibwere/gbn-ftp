@@ -932,10 +932,17 @@ bool get_file(void)
         memset(path, 0x0, PATH_SIZE);
         memset(filename, 0x0, CHUNK_SIZE);
 
+get_filename_g:
         cls();
         printf("Which file do you want to download? ");
         fflush(stdout);
         get_input(CHUNK_SIZE, filename, true);
+
+        if (filename[0] == '.') {
+                printf("Hidden file cannot be requested to server\nPlease press enter and retry\n");
+                getchar();
+                goto get_filename_g;
+        }
 
         snprintf(path, PATH_SIZE, "/home/%s/.gbn-ftp-download/%s", getenv("USER"), filename);
 
@@ -1124,7 +1131,7 @@ bool put_file(void)
                 fflush(stdout);
                 get_input(PATH_SIZE, path, true);
 
-get_filename:
+get_filename_p:
                 printf("Choose the name for the upload (default: %s)? ", basename(path));
                 fflush(stdout);
                 filename_size = get_input(CHUNK_SIZE, filename, false);
@@ -1133,13 +1140,13 @@ get_filename:
                         if (filename[0] == '.') {
                                 printf("File cannot start by '.'\nPlease press enter and retry\n");
                                 getchar();
-                                goto get_filename;
+                                goto get_filename_p;
                         }
                 } else {
                         if (basename(path)[0] == '.') {
                                 printf("File cannot start by '.'\nPlease press enter and retry\n");
                                 getchar();
-                                goto get_filename;
+                                goto get_filename_p;
                         }
                 }
 
