@@ -756,10 +756,6 @@ void *receiver_routine(void *args)
 
         printf("{INFO} %s is quitting right now\n", winfo[id].id_string);
 
-        #ifdef DEBUG
-        printf("{DEBUG} %s is quitting right now\n", winfo[id].id_string);
-        #endif
-
         pthread_exit(NULL);
 }
 
@@ -1643,6 +1639,8 @@ bool acceptance_loop(void)
                                         if (!can_open) {
                                                 if (!send_error_message(winfo_index))
                                                         return false; 
+
+                                                reset_worker_info(winfo_index, true, true);
                                         } else {   
                                                 return false;
                                         }
@@ -1659,6 +1657,8 @@ bool acceptance_loop(void)
                                         if (!can_open) {
                                                 if (!send_error_message(winfo_index))
                                                         return false; 
+
+                                                reset_worker_info(winfo_index, true, true);
                                         } else {   
                                                 return false;
                                         }
