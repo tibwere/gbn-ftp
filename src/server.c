@@ -1541,6 +1541,7 @@ bool send_error_message(int id)
 bool dispose_leaked_resources(void)
 {
         for (int i = 0; i < concurrenty_connections; ++i) {
+                
                 if (get_status_safe(&winfo[i].status, &winfo[i].mutex) == QUIT) {
                         pthread_join(winfo[i].tid, NULL);
 
