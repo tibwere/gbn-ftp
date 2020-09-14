@@ -1231,6 +1231,8 @@ get_filename_p:
                 return false;
         }
 
+        printf("Upload started\n");
+
         if (!p_connect_loop())
                 return false;
 
