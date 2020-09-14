@@ -379,8 +379,8 @@ bool lg_send_new_port_mess(long id)
 
                 while (winfo[id].status != CONNECTED) {
                         gettimeofday(&tv, NULL);
-                        ts.tv_sec = tv.tv_sec + floor((double) (config->rto_usec + tv.tv_usec) / (double) 1000000);
-                        ts.tv_nsec = ((tv.tv_usec + config->rto_usec) % 1000000) * 1000;
+                        ts.tv_sec = tv.tv_sec + floor((double) ((i * config->rto_usec) + tv.tv_usec) / (double) 1000000);
+                        ts.tv_nsec = ((tv.tv_usec + (i * config->rto_usec)) % 1000000) * 1000;
                         
                         ret = pthread_cond_timedwait(&winfo[id].cond_var, &winfo[id].cond_mutex, &ts);
                         
@@ -459,8 +459,8 @@ bool p_send_new_port_mess(long id)
                 #endif
 
                 read_fds = all_fds;
-                tv.tv_sec = floor((double) config->rto_usec / (double) 1000000);
-                tv.tv_usec =  config->rto_usec % 1000000;
+                tv.tv_sec = floor((double) (i * config->rto_usec) / (double) 1000000);
+                tv.tv_usec =  (i * config->rto_usec) % 1000000;
 
                 if ((ret = select(winfo[id].socket + 1, &read_fds, NULL, NULL, &tv)) == -1) {
                         snprintf(error_message, ERR_SIZE, "{ERROR} %s Unable to get message (select)", winfo[id].id_string);
