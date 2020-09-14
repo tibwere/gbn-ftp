@@ -1222,7 +1222,11 @@ get_filename_p:
                 return false;
 
         pthread_join(args->tid, NULL);
+
+        pthread_sigmask(SIG_BLOCK, &t_set, NULL);
         dispose_put_args();
+        pthread_sigmask(SIG_UNBLOCK, &t_set, NULL);
+        
         close(sockfd);
 
         #ifdef DEBUG

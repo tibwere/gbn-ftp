@@ -1781,7 +1781,7 @@ int main(int argc, char **argv)
                                 printf("rcvtimeout.: %lu usec\n", config->rto_usec);
                                 printf("port.......: %u\n", acceptance_port);
                                 printf("adapitve...: %s\n", (config->is_adaptive) ? "true" : "false");
-                                printf("probability: %f\n", PROBABILITY);
+                                printf("probability: %g\n", PROBABILITY);
                                 printf("pool size..: %ld\n\n", concurrenty_connections);
                         }
  
