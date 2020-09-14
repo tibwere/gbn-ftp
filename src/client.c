@@ -409,8 +409,10 @@ void *put_sender_routine(__attribute__((unused)) void *dummy)
 void exit_client(int status) 
 {
         if (args) {
-                set_status_safe(&args->status, QUIT, &args->mutex);
-                pthread_join(args->tid, NULL);
+                if (get_status_safe(&args->status, &args->mutex) != REQUEST) {
+                        set_status_safe(&args->status, QUIT, &args->mutex);
+                        pthread_join(args->tid, NULL);
+                }
         }
 
         dispose_put_args();
