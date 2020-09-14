@@ -20,6 +20,7 @@
 #include <math.h>
 #include <errno.h>
 #include <signal.h>
+#include <sys/stat.h>
 
 
 /* LIBRERIE CUSTOM */
@@ -589,6 +590,7 @@ bool handle_ack_messages(long id)
 {       
         char payload[CHUNK_SIZE];
         char error_message[ERR_SIZE];
+        char path[PATH_SIZE];
         fd_set read_fds, all_fds;
         int retval;
         struct timeval tv;
@@ -600,6 +602,7 @@ bool handle_ack_messages(long id)
         FD_SET(winfo[id].socket, &all_fds);
 
         memset(error_message, 0x0, ERR_SIZE);
+        memset(path, 0x0, PATH_SIZE);
 
         while (get_status_safe(&winfo[id].status, &winfo[id].mutex) == CONNECTED) {
 
@@ -648,6 +651,8 @@ bool handle_ack_messages(long id)
                                                 return false;
 
                                         winfo[id].to_be_deleted = false;
+                                        snprintf(path, PATH_SIZE, "/home/%s/.gbn-ftp-public/%s", getenv("USER"), winfo[id].filename);
+                                        chmod(path, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 
                                         set_status_safe(&winfo[id].status, QUIT, &winfo[id].mutex);
                                 }
@@ -1191,7 +1196,7 @@ bool start_sender(long index, struct sockaddr_in *client_sockaddr, enum message_
         if (winfo[index].modality == GET) {
                 snprintf(path, PATH_SIZE, "/home/%s/.gbn-ftp-public/%s", getenv("USER"), winfo[index].filename);
                 if ((winfo[index].fd = open(path, O_RDONLY)) == -1) {
-                        if (errno == ENOENT) {
+                        if (errno == ENOENT || errno == EACCES) {
                                 *can_open_ptr = false;
                                 return false;
                         }
@@ -1245,7 +1250,7 @@ bool start_receiver(long index, struct sockaddr_in *client_sockaddr, const char 
 
         snprintf(path, PATH_SIZE, "/home/%s/.gbn-ftp-public/%s", getenv("USER"), winfo[index].filename);
 
-        if ((winfo[index].fd = open(path, O_CREAT | O_EXCL | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) == -1) {
+        if ((winfo[index].fd = open(path, O_CREAT | O_EXCL | O_WRONLY | O_TRUNC, S_IWUSR)) == -1) {
                 if (errno == EEXIST) {
                         *can_open_ptr = false;
                         return false;
