@@ -901,7 +901,7 @@ bool list(void)
         can_connect = true;
         if (!l_request_loop(&status, &can_connect)) {
                 if (!can_connect) {
-                        printf("\nServer is busy...\nPlease press enter key to get back to menu and try again later\n");
+                        printf("\nServer is busy...\nPlease press enter to get back to menu and try again later\n");
                         getchar();
                         return true;
                 } 
@@ -988,13 +988,13 @@ get_filename_g:
         can_connect = true;
         if (!g_request_loop(fd, filename, &status, &delete_file, &can_connect)) {
                 if (!can_connect) {
-                        printf("\nServer is busy...\nPlease press enter key to get back to menu and try again later\n");
+                        printf("\nServer is busy...\nPlease press enter to get back to menu and try again later\n");
                         getchar();
                         return true;
                 }
 
                 if (delete_file) {
-                        printf("Selected file does not exists on server\nPress enter to get back to menu ");
+                        printf("Selected file does not exists on server\nPress enter to get back to menu\n");
                         getchar();
                         remove(path);
                         return true;
@@ -1010,8 +1010,7 @@ get_filename_g:
         close(fd);
         close(sockfd);
 
-        printf("\n\nFile succesfully downloaded\nPress enter to get back to menu");
-        fflush(stdout);
+        printf("\n\nFile succesfully downloaded\nPress enter to get back to menu\n");
         getchar();
 
         return true;
@@ -1133,6 +1132,7 @@ bool put_file(void)
         char choice;
         bool already_exists = false;
         bool can_connect;
+        struct stat buf;
 
         if (!init_put_args())
                 return false;
@@ -1183,6 +1183,19 @@ get_filename_p:
                         return false;
                 }
 
+                if (fstat(args->fd, &buf) != 0) {
+                        perr("{ERROR} [Main Thread] Unable to check if selected file is a directory");                        
+                        return false;
+                }
+
+                if (S_ISDIR(buf.st_mode)) {
+                        printf("Selected file is a directory\nPress enter and get back to menu\n");
+                        getchar();
+
+                        dispose_put_args();
+                        return true;
+                }
+
                 args->number_of_chunks = ceil((double) lseek(args->fd, 0, SEEK_END) / (double) CHUNK_SIZE);
                 lseek(args->fd, 0, SEEK_SET);
 
@@ -1198,14 +1211,14 @@ get_filename_p:
         if (!p_request_loop(args->fd, (filename_size) ? filename : basename(path), &args->status, &already_exists, &can_connect)) {
                 if (!can_connect) {
                         dispose_put_args();
-                        printf("\nServer is busy...\nPlease press enter key to get back to menu and try again later\n");
+                        printf("\nServer is busy...\nPlease press enter to get back to menu and try again later\n");
                         getchar();
                         return true;
                 }
 
                 if (already_exists) {
                         dispose_put_args();
-                        printf("Selected file already exists on server\nPress enter to get back to menu ");
+                        printf("Selected file already exists on server\nPress enter to get back to menu\n");
                         getchar();
                         return true;
                 }
@@ -1226,7 +1239,7 @@ get_filename_p:
         pthread_sigmask(SIG_BLOCK, &t_set, NULL);
         dispose_put_args();
         pthread_sigmask(SIG_UNBLOCK, &t_set, NULL);
-        
+
         close(sockfd);
 
         #ifdef DEBUG
