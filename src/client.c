@@ -1102,14 +1102,19 @@ bool dispose_put_args(void)
                         return false;
                 }
 
-                close(args->fd);
+                if (args->fd != -1)
+                        close(args->fd);
+
                 free(args);
                 args = NULL;
 
-                if (config->is_adaptive) {
-                        free(adapt);
-                        adapt = NULL;
+                if (config) {
+                        if (config->is_adaptive) {
+                                free(adapt);
+                                adapt = NULL;
+                        }
                 }
+
         }
 
         return true;
