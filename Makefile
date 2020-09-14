@@ -35,4 +35,4 @@ client: $(COBJ) $(OBJ)
 .PHONY: clean
 
 clean:
-	rm -f $(ODIR)/*.o
+	rm -f $(ODIR)/*.o $(BDIR)/*
