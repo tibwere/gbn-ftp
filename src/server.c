@@ -55,7 +55,7 @@ struct worker_info {
         pthread_t tid;                                  /* ID del thread servente*/
         int fd;                                         /* Descrittore del file su cui si deve operare */ 
         long number_of_chunks;                          /* Numero totale di chunk da inviare */
-        bool to_be_deleted;
+        bool to_be_deleted;                             /* Nel caso di chiamata PUT se vale true il file in chiusura va eliminato poichè ancora non totalmente ricevuto */
 
         #ifdef TEST
         struct timeval first_ack;                       /* Istante di tempo in cui si riceve il primo ACK */
